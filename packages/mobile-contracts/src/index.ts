@@ -78,6 +78,7 @@ export interface SessionDTO {
   id: string;
   workspaceId: string;
   name: string | null;
+  workingDirectory?: string | 'user_default' | 'none';
   lastMessageAt: number;
   isProcessing: boolean;
   sessionStatus: SessionStatusDTO | null;

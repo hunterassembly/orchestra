@@ -9,6 +9,7 @@ const TEST_HOST = '127.0.0.1';
 const AUTH_HEADERS = {
   authorization: 'Bearer test-token',
 };
+const DEFAULT_SEEDED_SESSION_ID = 'seeded-session-1';
 
 const startedServers: GatewayServer[] = [];
 
@@ -285,6 +286,7 @@ describe('test-server utilities', () => {
       workspaceId: 'default',
       name: 'Created Session',
       permissionMode: 'safe',
+      workingDirectory: '/tmp/project',
     });
 
     const createCall = fixture.getLastCreateCall();
@@ -338,6 +340,28 @@ describe('test-server utilities', () => {
 
     expect(pagedMessage.id).toBe('msg-3');
     expect(secondPayload.hasMore).toBe(false);
+  });
+
+  it('returns seeded messages from the default mock session manager via GET /api/sessions/:id', async () => {
+    const server = createTestServer({
+      host: TEST_HOST,
+      port: 0,
+    });
+    startedServers.push(server);
+
+    const { port } = await server.start();
+    const response = await fetch(`http://${TEST_HOST}:${port}/api/sessions/${DEFAULT_SEEDED_SESSION_ID}`, {
+      headers: AUTH_HEADERS,
+    });
+
+    expect(response.status).toBe(200);
+    const payload = (await response.json()) as SessionDetailsResponse;
+    expect(payload.id).toBe(DEFAULT_SEEDED_SESSION_ID);
+    expect(payload.messages.length).toBeGreaterThan(0);
+    expect(payload.messages[0]).toMatchObject({
+      role: 'user',
+      content: 'Seeded user message',
+    });
   });
 
   it('deletes a session and subsequent GET returns 404', async () => {

@@ -49,6 +49,39 @@ const DEFAULT_VERSION = '0.0.0';
 const DEFAULT_SSE_HEARTBEAT_INTERVAL_MS = 30_000;
 const VALID_PERMISSION_MODES: PermissionModeDTO[] = ['safe', 'ask', 'allow-all'];
 
+function createDefaultSeededSessions(workspaceId: string): MockSession[] {
+  return [
+    {
+      id: 'seeded-session-1',
+      workspaceId,
+      name: 'Seeded Session',
+      lastMessageAt: 1710000000100,
+      isProcessing: false,
+      sessionStatus: null,
+      hasUnread: false,
+      permissionMode: 'ask',
+      labels: [],
+      preview: 'Seeded assistant reply',
+      messageCount: 2,
+      tokenUsage: null,
+      messages: [
+        {
+          id: 'seeded-message-1',
+          role: 'user',
+          content: 'Seeded user message',
+          timestamp: 1710000000000,
+        },
+        {
+          id: 'seeded-message-2',
+          role: 'assistant',
+          content: 'Seeded assistant reply',
+          timestamp: 1710000000100,
+        },
+      ],
+    },
+  ];
+}
+
 function cloneSession(session: MockSession): MockSession {
   return structuredClone(session);
 }
@@ -185,8 +218,10 @@ export function createMockSessionManager(options: CreateMockSessionManagerOption
 
   const workspaceIds = new Set(seededWorkspaces.map((workspace) => workspace.id));
   const sessionsById = new Map<string, MockSession>();
+  const seededSessions = normalizedOptions.sessions
+    ?? createDefaultSeededSessions(seededWorkspaces[0]?.id ?? 'default');
 
-  for (const session of normalizedOptions.sessions ?? []) {
+  for (const session of seededSessions) {
     sessionsById.set(session.id, cloneSession(session));
     workspaceIds.add(session.workspaceId);
   }

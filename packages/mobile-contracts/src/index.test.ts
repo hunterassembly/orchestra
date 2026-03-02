@@ -56,4 +56,12 @@ describe('mobile contracts exports', () => {
     expect(SESSION_EVENT_TYPES).toEqual(EXPECTED_EVENT_TYPES);
     expect(new Set(SESSION_EVENT_TYPES).size).toBe(SESSION_EVENT_TYPES.length);
   });
+
+  it('defines SessionDTO.workingDirectory as an optional field', () => {
+    const sessionDtoMatch = INDEX_SOURCE.match(/export\s+interface\s+SessionDTO\s*\{([\s\S]*?)\n\}/);
+    expect(sessionDtoMatch).not.toBeNull();
+
+    const sessionDtoBlock = sessionDtoMatch?.[1] ?? '';
+    expect(sessionDtoBlock).toMatch(/workingDirectory\?:\s*string\s*\|\s*'user_default'\s*\|\s*'none';/);
+  });
 });

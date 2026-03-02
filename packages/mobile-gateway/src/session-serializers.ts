@@ -1,9 +1,12 @@
 import type {
+  CreateSessionOptionsDTO,
   MessageDTO,
   PermissionModeDTO,
   SessionDTO,
   TokenUsageDTO,
 } from '@craft-agent/mobile-contracts';
+
+type WorkingDirectoryOption = CreateSessionOptionsDTO['workingDirectory'];
 
 const PERMISSION_MODES = new Set<PermissionModeDTO>(['safe', 'ask', 'allow-all']);
 
@@ -26,6 +29,7 @@ export interface GatewaySessionLike {
   id: string;
   workspaceId: string;
   name?: string | null;
+  workingDirectory?: WorkingDirectoryOption;
   lastMessageAt?: number | string | Date | null;
   isProcessing?: boolean;
   sessionStatus?: string | null;
@@ -157,6 +161,10 @@ export function serializeSession(
       : serializedMessages.length,
     tokenUsage: sanitizeTokenUsage(session.tokenUsage ?? null),
   };
+
+  if (session.workingDirectory !== undefined && session.workingDirectory !== null) {
+    dto.workingDirectory = session.workingDirectory;
+  }
 
   if (options?.includeMessages) {
     dto.messages = responseMessages;
