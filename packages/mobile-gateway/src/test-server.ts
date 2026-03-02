@@ -24,12 +24,15 @@ type WorkingDirectoryOption = CreateSessionOptionsDTO['workingDirectory'];
 
 export interface MockSession extends GatewaySessionLike {
   workingDirectory?: WorkingDirectoryOption;
+  activeShellIds?: string[];
 }
 
 export interface MockSessionManagerHooks {
   onCreateSession?: (workspaceId: string, options: CreateSessionOptionsDTO) => void;
   onDeleteSession?: (sessionId: string) => void;
   onSendMessage?: (sessionId: string, text: string, options: SendMessageOptionsDTO) => void;
+  onCancelProcessing?: (sessionId: string) => void;
+  onKillShell?: (sessionId: string, shellId: string) => void;
 }
 
 export interface MockSendMessageResult {
@@ -49,6 +52,8 @@ export interface MockSessionManager extends GatewaySessionManager {
   getSession: (sessionId: string) => Promise<MockSession | null>;
   createSession: (workspaceId: string, options: CreateSessionOptionsDTO) => Promise<MockSession>;
   sendMessage: (sessionId: string, text: string, options: SendMessageOptionsDTO) => Promise<MockSendMessageResult>;
+  cancelProcessing: (sessionId: string) => Promise<boolean>;
+  killShell: (sessionId: string, shellId: string) => Promise<boolean>;
   deleteSession: (sessionId: string) => Promise<boolean>;
 }
 
@@ -82,6 +87,7 @@ function createDefaultSeededSessions(workspaceId: string): MockSession[] {
       preview: 'Seeded assistant reply',
       messageCount: 2,
       tokenUsage: null,
+      activeShellIds: [],
       messages: [
         {
           id: 'seeded-message-1',
@@ -395,6 +401,7 @@ export function createMockSessionManager(options: CreateMockSessionManagerOption
         messageCount: 0,
         tokenUsage: null,
         workingDirectory: options.workingDirectory,
+        activeShellIds: [],
         messages: [],
       };
 
@@ -493,6 +500,47 @@ export function createMockSessionManager(options: CreateMockSessionManagerOption
           },
         ],
       };
+    },
+    async cancelProcessing(sessionId: string) {
+      hooks?.onCancelProcessing?.(sessionId);
+
+      const session = sessionsById.get(sessionId);
+      if (!session) {
+        return false;
+      }
+
+      if (!session.isProcessing) {
+        return false;
+      }
+
+      const updatedSession: MockSession = {
+        ...session,
+        isProcessing: false,
+      };
+
+      sessionsById.set(sessionId, updatedSession);
+      return true;
+    },
+    async killShell(sessionId: string, shellId: string) {
+      hooks?.onKillShell?.(sessionId, shellId);
+
+      const session = sessionsById.get(sessionId);
+      if (!session) {
+        return false;
+      }
+
+      const activeShellIds = session.activeShellIds ?? [];
+      if (!activeShellIds.includes(shellId)) {
+        return false;
+      }
+
+      const updatedSession: MockSession = {
+        ...session,
+        activeShellIds: activeShellIds.filter((id) => id !== shellId),
+      };
+
+      sessionsById.set(sessionId, updatedSession);
+      return true;
     },
     async deleteSession(sessionId: string) {
       if (!sessionsById.has(sessionId)) {
@@ -813,6 +861,90 @@ export function createTestServer(options: TestServerOptions = {}): GatewayServer
 
           json(sendResult.status ?? MESSAGE_SEND_ACCEPTED_STATUS, {
             status: 'accepted',
+          });
+        },
+      },
+      {
+        method: 'POST',
+        path: '/api/sessions/:sessionId/interrupt',
+        handler: async ({ req, params, error, json }) => {
+          const auth = requireAuth(req.headers.authorization);
+          if (!auth.authorized) {
+            error(401, 'unauthorized', 'Authorization required');
+            return;
+          }
+
+          const sessionId = params.sessionId;
+          if (!sessionId) {
+            error(404, 'session_not_found', 'Session not found');
+            return;
+          }
+
+          const session = await getSessionOrNull(sessionManager, sessionId);
+          if (!session) {
+            error(404, 'session_not_found', 'Session not found');
+            return;
+          }
+
+          sessionWorkspaceCache.set(sessionId, session.workspaceId);
+
+          const wasInterrupted = await sessionManager.cancelProcessing(sessionId);
+          if (wasInterrupted) {
+            await fanoutEvent({
+              type: 'interrupted',
+              sessionId,
+            });
+          }
+
+          json(200, {
+            status: 'ok',
+          });
+        },
+      },
+      {
+        method: 'POST',
+        path: '/api/sessions/:sessionId/shells/:shellId/kill',
+        handler: async ({ req, params, error, json }) => {
+          const auth = requireAuth(req.headers.authorization);
+          if (!auth.authorized) {
+            error(401, 'unauthorized', 'Authorization required');
+            return;
+          }
+
+          const sessionId = params.sessionId;
+          if (!sessionId) {
+            error(404, 'session_not_found', 'Session not found');
+            return;
+          }
+
+          const shellId = params.shellId;
+          if (!shellId) {
+            error(404, 'shell_not_found', 'Shell not found');
+            return;
+          }
+
+          const session = await getSessionOrNull(sessionManager, sessionId);
+          if (!session) {
+            error(404, 'session_not_found', 'Session not found');
+            return;
+          }
+
+          sessionWorkspaceCache.set(sessionId, session.workspaceId);
+
+          const didKill = await sessionManager.killShell(sessionId, shellId);
+          if (!didKill) {
+            error(404, 'shell_not_found', 'Shell not found');
+            return;
+          }
+
+          await fanoutEvent({
+            type: 'shell_killed',
+            sessionId,
+            shellId,
+          });
+
+          json(200, {
+            status: 'ok',
           });
         },
       },
