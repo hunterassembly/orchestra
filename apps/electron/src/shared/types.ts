@@ -117,6 +117,12 @@ export interface SessionFile {
   children?: SessionFile[]  // Recursive children for directories
 }
 
+export interface GitStatusEntry {
+  path: string
+  status: string  // XY from git status --porcelain (e.g. 'M', 'A', 'D', '??', 'MM')
+  staged: boolean
+}
+
 /**
  * File search result for @ mention file selection.
  * Returned by FS_SEARCH IPC handler when user types @filename in input.
@@ -649,6 +655,12 @@ export const IPC_CHANNELS = {
   UNWATCH_SESSION_FILES: 'sessions:unwatchFiles',  // Stop watching
   SESSION_FILES_CHANGED: 'sessions:filesChanged',  // Event: main → renderer
 
+  // Workspace file tree
+  GET_WORKSPACE_FILES: 'workspace:getFiles',
+  WATCH_WORKSPACE_FILES: 'workspace:watchFiles',
+  UNWATCH_WORKSPACE_FILES: 'workspace:unwatchFiles',
+  WORKSPACE_FILES_CHANGED: 'workspace:filesChanged',
+
   // Theme
   GET_SYSTEM_THEME: 'theme:getSystemPreference',
   SYSTEM_THEME_CHANGED: 'theme:systemChanged',
@@ -865,6 +877,8 @@ export const IPC_CHANNELS = {
 
   // Git operations
   GET_GIT_BRANCH: 'git:getBranch',
+  GET_GIT_STATUS: 'git:getStatus',
+  GET_GIT_DIFF: 'git:getDiff',
 
   // Git Bash (Windows)
   GITBASH_CHECK: 'gitbash:check',
@@ -1096,6 +1110,12 @@ export interface ElectronAPI {
   unwatchSessionFiles(): Promise<void>
   onSessionFilesChanged(callback: (sessionId: string) => void): () => void
 
+  // Workspace File Tree
+  getWorkspaceFiles(rootPath: string): Promise<SessionFile[]>
+  watchWorkspaceFiles(rootPath: string): Promise<void>
+  unwatchWorkspaceFiles(): Promise<void>
+  onWorkspaceFilesChanged(callback: (rootPath: string) => void): () => void
+
   // Sources
   getSources(workspaceId: string): Promise<LoadedSource[]>
   createSource(workspaceId: string, config: Partial<FolderSourceConfig>): Promise<FolderSourceConfig>
@@ -1210,6 +1230,8 @@ export interface ElectronAPI {
 
   // Git operations
   getGitBranch(dirPath: string): Promise<string | null>
+  getGitStatus(dirPath: string): Promise<GitStatusEntry[]>
+  getGitDiff(dirPath: string, filePath: string): Promise<string>
 
   // Git Bash (Windows)
   checkGitBash(): Promise<GitBashStatus>

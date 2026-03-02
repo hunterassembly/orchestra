@@ -9,7 +9,7 @@ import { SessionManager } from './sessions'
 import { ipcLog, windowLog, searchLog } from './logger'
 import { WindowManager } from './window-manager'
 import { registerOnboardingHandlers } from './onboarding'
-import { IPC_CHANNELS, type FileAttachment, type StoredAttachment, type SendMessageOptions, type LlmConnectionSetup, type SkillFile } from '../shared/types'
+import { IPC_CHANNELS, type FileAttachment, type StoredAttachment, type SendMessageOptions, type LlmConnectionSetup, type SkillFile, type GitStatusEntry } from '../shared/types'
 import { readFileAttachment, perf, validateImageForClaudeAPI, IMAGE_LIMITS } from '@craft-agent/shared/utils'
 import { safeJsonParse } from '@craft-agent/shared/utils/files'
 import { getPreferencesPath, getSessionDraft, setSessionDraft, deleteSessionDraft, getAllSessionDrafts, getWorkspaceByNameOrId, addWorkspace, setActiveWorkspace, loadStoredConfig, saveConfig, type Workspace, getLlmConnections, getLlmConnection, addLlmConnection, updateLlmConnection, deleteLlmConnection, getDefaultLlmConnection, setDefaultLlmConnection, touchLlmConnection, isCompatProvider, isAnthropicProvider, getDefaultModelsForConnection, getDefaultModelForConnection, type LlmConnection, type LlmConnectionWithStatus, getGitBashPath, setGitBashPath, clearGitBashPath } from '@craft-agent/shared/config'
@@ -843,6 +843,63 @@ export function registerIpcHandlers(sessionManager: SessionManager, windowManage
     } catch {
       // Not a git repo, git not installed, or other error
       return null
+    }
+  })
+
+  // Get git status for a directory (returns list of changed files)
+  ipcMain.handle(IPC_CHANNELS.GET_GIT_STATUS, (_event, dirPath: string): GitStatusEntry[] => {
+    try {
+      const output = execSync('git status --porcelain', {
+        cwd: dirPath,
+        encoding: 'utf-8',
+        stdio: ['pipe', 'pipe', 'pipe'],
+        timeout: 10000,
+      })
+      if (!output.trim()) return []
+
+      const entries: GitStatusEntry[] = []
+      for (const line of output.split('\n')) {
+        if (!line) continue
+        const indexStatus = line[0]   // staged status
+        const workTreeStatus = line[1] // unstaged status
+        const filePath = line.slice(3) // path starts after "XY "
+
+        // Determine display status: prefer worktree status, fall back to index
+        let status: string
+        let staged = false
+        if (indexStatus === '?' && workTreeStatus === '?') {
+          status = '?'
+        } else if (workTreeStatus !== ' ' && workTreeStatus !== undefined) {
+          status = workTreeStatus
+          staged = indexStatus !== ' ' && indexStatus !== '?'
+        } else {
+          status = indexStatus!
+          staged = true
+        }
+
+        entries.push({ path: filePath, status, staged })
+      }
+
+      entries.sort((a, b) => a.path.localeCompare(b.path))
+      return entries
+    } catch {
+      return []
+    }
+  })
+
+  // Get git diff for a specific file (returns unified diff string)
+  ipcMain.handle(IPC_CHANNELS.GET_GIT_DIFF, (_event, dirPath: string, filePath: string): string => {
+    try {
+      const diff = execSync(`git diff HEAD -- ${JSON.stringify(filePath)}`, {
+        cwd: dirPath,
+        encoding: 'utf-8',
+        stdio: ['pipe', 'pipe', 'pipe'],
+        timeout: 10000,
+        maxBuffer: 1024 * 1024 * 5, // 5MB
+      })
+      return diff
+    } catch {
+      return ''
     }
   })
 
@@ -2139,6 +2196,130 @@ export function registerIpcHandlers(sessionManager: SessionManager, windowManage
     if (watchedSessionId) {
       watchedSessionId = null
     }
+  })
+
+  // ============================================================
+  // Workspace File Tree
+  // ============================================================
+
+  // Directories to skip when scanning workspace trees
+  const WORKSPACE_SKIP_DIRS = new Set([
+    'node_modules', '.git', '.svn', '.hg', 'dist', 'build',
+    '.next', '.nuxt', '.cache', '__pycache__', 'vendor',
+    '.turbo', 'out', '.output', '.parcel-cache',
+  ])
+
+  /**
+   * Scan a workspace directory one level deep.
+   * Returns sorted entries (directories first, then alphabetically).
+   * Unlike scanSessionDirectory, this includes dotfiles and empty directories.
+   */
+  async function scanWorkspaceDirectory(dirPath: string): Promise<import('../shared/types').SessionFile[]> {
+    const { readdir, stat } = await import('fs/promises')
+    const entries = await readdir(dirPath, { withFileTypes: true })
+    const files: import('../shared/types').SessionFile[] = []
+
+    for (const entry of entries) {
+      const fullPath = join(dirPath, entry.name)
+
+      if (entry.isDirectory()) {
+        // Skip heavy directories but show them as collapsed entries
+        if (WORKSPACE_SKIP_DIRS.has(entry.name)) {
+          continue
+        }
+        files.push({
+          name: entry.name,
+          path: fullPath,
+          type: 'directory',
+          // children not populated — loaded lazily on expand
+        })
+      } else {
+        try {
+          const stats = await stat(fullPath)
+          files.push({
+            name: entry.name,
+            path: fullPath,
+            type: 'file',
+            size: stats.size,
+          })
+        } catch {
+          // Skip files we can't stat (broken symlinks, etc.)
+          files.push({
+            name: entry.name,
+            path: fullPath,
+            type: 'file',
+          })
+        }
+      }
+    }
+
+    return files.sort((a, b) => {
+      if (a.type !== b.type) return a.type === 'directory' ? -1 : 1
+      return a.name.localeCompare(b.name)
+    })
+  }
+
+  // Get files in a workspace directory (single level, lazy-loaded)
+  ipcMain.handle(IPC_CHANNELS.GET_WORKSPACE_FILES, async (_event, rootPath: string) => {
+    if (!rootPath) return []
+    try {
+      return await scanWorkspaceDirectory(rootPath)
+    } catch (error) {
+      ipcLog.error('Failed to get workspace files:', error)
+      return []
+    }
+  })
+
+  // Workspace file watcher state - only one workspace watched at a time
+  let workspaceFileWatcher: import('fs').FSWatcher | null = null
+  let watchedWorkspacePath: string | null = null
+  let workspaceFileChangeDebounceTimer: ReturnType<typeof setTimeout> | null = null
+
+  ipcMain.handle(IPC_CHANNELS.WATCH_WORKSPACE_FILES, async (_event, rootPath: string) => {
+    if (!rootPath) return
+
+    // Close existing watcher if watching a different path
+    if (workspaceFileWatcher) {
+      workspaceFileWatcher.close()
+      workspaceFileWatcher = null
+    }
+    if (workspaceFileChangeDebounceTimer) {
+      clearTimeout(workspaceFileChangeDebounceTimer)
+      workspaceFileChangeDebounceTimer = null
+    }
+
+    watchedWorkspacePath = rootPath
+
+    try {
+      const { watch } = await import('fs')
+      // Non-recursive watch — we only care about top-level changes
+      // (child directories are lazily loaded and re-fetched on expand)
+      workspaceFileWatcher = watch(rootPath, {}, () => {
+        if (workspaceFileChangeDebounceTimer) {
+          clearTimeout(workspaceFileChangeDebounceTimer)
+        }
+        workspaceFileChangeDebounceTimer = setTimeout(() => {
+          const { BrowserWindow } = require('electron')
+          for (const win of BrowserWindow.getAllWindows()) {
+            win.webContents.send(IPC_CHANNELS.WORKSPACE_FILES_CHANGED, watchedWorkspacePath)
+          }
+        }, 200)
+      })
+    } catch (error) {
+      ipcLog.error('Failed to start workspace file watcher:', error)
+    }
+  })
+
+  ipcMain.handle(IPC_CHANNELS.UNWATCH_WORKSPACE_FILES, async () => {
+    if (workspaceFileWatcher) {
+      workspaceFileWatcher.close()
+      workspaceFileWatcher = null
+    }
+    if (workspaceFileChangeDebounceTimer) {
+      clearTimeout(workspaceFileChangeDebounceTimer)
+      workspaceFileChangeDebounceTimer = null
+    }
+    watchedWorkspacePath = null
   })
 
   // Get session notes (reads notes.md from session directory)

@@ -8,6 +8,7 @@
 import * as React from 'react'
 import type { RightSidebarPanel } from '../../../shared/types'
 import { SessionMetadataPanel } from '../right-sidebar/SessionMetadataPanel'
+import { WorkspaceFilesPanel } from '../right-sidebar/WorkspaceFilesPanel'
 
 export interface RightSidebarProps {
   /** Current panel configuration */
@@ -27,12 +28,7 @@ export function RightSidebar({ panel, sessionId, closeButton }: RightSidebarProp
       return <SessionMetadataPanel sessionId={sessionId} closeButton={closeButton} />
 
     case 'files':
-      // TODO: Implement SessionFilesPanel
-      return (
-        <div className="h-full flex items-center justify-center text-muted-foreground">
-          <p className="text-sm">Files panel - Coming soon</p>
-        </div>
-      )
+      return <WorkspaceFilesPanel sessionId={sessionId} closeButton={closeButton} />
 
     case 'history':
       // TODO: Implement SessionHistoryPanel

@@ -895,10 +895,10 @@ export function NavigationProvider({
     if (!navigationState) return
 
     // If panel specified, open to that panel
-    // If no panel, toggle between closed and default panel (sessionMetadata)
+    // If no panel, toggle between closed and default panel (files)
     const newPanel = panel || (navigationState.rightSidebar && navigationState.rightSidebar.type !== 'none'
       ? { type: 'none' as const }
-      : { type: 'sessionMetadata' as const })
+      : { type: 'files' as const })
 
     updateRightSidebar(newPanel)
   }, [navigationState, updateRightSidebar])
