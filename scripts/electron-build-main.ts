@@ -17,6 +17,7 @@ const SESSION_SERVER_DIR = join(ROOT_DIR, "packages/session-mcp-server");
 const SESSION_SERVER_OUTPUT = join(SESSION_SERVER_DIR, "dist/index.js");
 const PI_AGENT_SERVER_DIR = join(ROOT_DIR, "packages/pi-agent-server");
 const PI_AGENT_SERVER_OUTPUT = join(PI_AGENT_SERVER_DIR, "dist/index.js");
+const PI_AGENT_SERVER_ENTRY = join(PI_AGENT_SERVER_DIR, "src/index.ts");
 
 // Load .env file if it exists
 function loadEnvFile(): void {
@@ -208,6 +209,11 @@ async function buildSessionServer(): Promise<void> {
 async function buildPiAgentServer(): Promise<void> {
   console.log("🥧 Building Pi Agent Server...");
 
+  if (!existsSync(PI_AGENT_SERVER_ENTRY)) {
+    console.warn(`⚠️ Pi agent server source not found at ${PI_AGENT_SERVER_ENTRY}. Skipping Pi server build.`);
+    return;
+  }
+
   // Ensure dist directory exists
   const distDir = join(PI_AGENT_SERVER_DIR, "dist");
   if (!existsSync(distDir)) {
@@ -220,7 +226,7 @@ async function buildPiAgentServer(): Promise<void> {
   const proc = spawn({
     cmd: [
       "bun", "build",
-      join(PI_AGENT_SERVER_DIR, "src/index.ts"),
+      PI_AGENT_SERVER_ENTRY,
       "--outfile", PI_AGENT_SERVER_OUTPUT,
       "--target", "bun",
       "--format", "esm",

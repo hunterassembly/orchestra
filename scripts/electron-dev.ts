@@ -18,6 +18,7 @@ const SESSION_SERVER_OUTPUT = join(SESSION_SERVER_DIR, "dist/index.js");
 // Pi agent server path (subprocess for Pi SDK sessions)
 const PI_AGENT_SERVER_DIR = join(ROOT_DIR, "packages/pi-agent-server");
 const PI_AGENT_SERVER_OUTPUT = join(PI_AGENT_SERVER_DIR, "dist/index.js");
+const PI_AGENT_SERVER_ENTRY = join(PI_AGENT_SERVER_DIR, "src/index.ts");
 
 // Platform-specific binary paths (bun creates .exe on Windows, no extension on Unix)
 const IS_WINDOWS = process.platform === "win32";
@@ -250,6 +251,11 @@ async function runEsbuild(
 // Bun's bundler handles ESM→ESM bundling correctly.
 async function buildPiAgentServer(): Promise<{ success: boolean; error?: string }> {
   try {
+    if (!existsSync(PI_AGENT_SERVER_ENTRY)) {
+      console.warn(`⚠️ Pi agent server source not found at ${PI_AGENT_SERVER_ENTRY}. Skipping Pi server build.`);
+      return { success: true };
+    }
+
     const proc = spawn({
       cmd: ["bun", "build", "src/index.ts", "--outdir=dist", "--target=bun", "--format=esm"],
       cwd: PI_AGENT_SERVER_DIR,
