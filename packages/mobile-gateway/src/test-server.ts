@@ -3,6 +3,8 @@ import type {
   CreateSessionOptionsDTO,
   MessageDTO,
   PermissionModeDTO,
+  SessionCommandDTO,
+  SessionStatusDTO,
   SendMessageOptionsDTO,
   SessionEventDTO,
   TokenUsageDTO,
@@ -33,6 +35,11 @@ export interface MockSessionManagerHooks {
   onSendMessage?: (sessionId: string, text: string, options: SendMessageOptionsDTO) => void;
   onCancelProcessing?: (sessionId: string) => void;
   onKillShell?: (sessionId: string, shellId: string) => void;
+  onRenameSession?: (sessionId: string, name: string) => void;
+  onSetSessionStatus?: (sessionId: string, state: SessionStatusDTO) => void;
+  onMarkSessionRead?: (sessionId: string) => void;
+  onMarkSessionUnread?: (sessionId: string) => void;
+  onSetSessionPermissionMode?: (sessionId: string, mode: PermissionModeDTO) => void;
 }
 
 export interface MockSendMessageResult {
@@ -52,6 +59,11 @@ export interface MockSessionManager extends GatewaySessionManager {
   getSession: (sessionId: string) => Promise<MockSession | null>;
   createSession: (workspaceId: string, options: CreateSessionOptionsDTO) => Promise<MockSession>;
   sendMessage: (sessionId: string, text: string, options: SendMessageOptionsDTO) => Promise<MockSendMessageResult>;
+  renameSession: (sessionId: string, name: string) => Promise<void>;
+  setSessionStatus: (sessionId: string, state: SessionStatusDTO) => Promise<void>;
+  markSessionRead: (sessionId: string) => Promise<void>;
+  markSessionUnread: (sessionId: string) => Promise<void>;
+  setSessionPermissionMode: (sessionId: string, mode: PermissionModeDTO) => Promise<void>;
   cancelProcessing: (sessionId: string) => Promise<boolean>;
   killShell: (sessionId: string, shellId: string) => Promise<boolean>;
   deleteSession: (sessionId: string) => Promise<boolean>;
@@ -223,6 +235,77 @@ function parseSendMessagePayload(input: unknown): { text: string; options: SendM
     text,
     options,
   };
+}
+
+function parseSessionCommand(input: unknown):
+  | { command: SessionCommandDTO }
+  | { error: string } {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    return { error: 'Session command payload must be an object' };
+  }
+
+  const candidate = input as Record<string, unknown>;
+  if (typeof candidate.type !== 'string') {
+    return { error: 'Session command type is required' };
+  }
+
+  switch (candidate.type) {
+    case 'rename': {
+      if (typeof candidate.name !== 'string' || candidate.name.trim().length === 0) {
+        return { error: 'rename command requires a non-empty name' };
+      }
+
+      return {
+        command: {
+          type: 'rename',
+          name: candidate.name,
+        },
+      };
+    }
+
+    case 'setSessionStatus': {
+      if (typeof candidate.state !== 'string' || candidate.state.trim().length === 0) {
+        return { error: 'setSessionStatus command requires a non-empty state' };
+      }
+
+      return {
+        command: {
+          type: 'setSessionStatus',
+          state: candidate.state,
+        },
+      };
+    }
+
+    case 'markRead':
+      return {
+        command: {
+          type: 'markRead',
+        },
+      };
+
+    case 'markUnread':
+      return {
+        command: {
+          type: 'markUnread',
+        },
+      };
+
+    case 'setPermissionMode': {
+      if (typeof candidate.mode !== 'string' || !VALID_PERMISSION_MODES.includes(candidate.mode as PermissionModeDTO)) {
+        return { error: 'setPermissionMode command requires a valid mode' };
+      }
+
+      return {
+        command: {
+          type: 'setPermissionMode',
+          mode: candidate.mode as PermissionModeDTO,
+        },
+      };
+    }
+
+    default:
+      return { error: 'Unknown command type' };
+  }
 }
 
 function parseSingleQueryParam(value: string | string[] | undefined): string | undefined {
@@ -500,6 +583,71 @@ export function createMockSessionManager(options: CreateMockSessionManagerOption
           },
         ],
       };
+    },
+    async renameSession(sessionId: string, name: string) {
+      hooks?.onRenameSession?.(sessionId, name);
+
+      const session = sessionsById.get(sessionId);
+      if (!session) {
+        return;
+      }
+
+      sessionsById.set(sessionId, {
+        ...session,
+        name,
+      });
+    },
+    async setSessionStatus(sessionId: string, state: SessionStatusDTO) {
+      hooks?.onSetSessionStatus?.(sessionId, state);
+
+      const session = sessionsById.get(sessionId);
+      if (!session) {
+        return;
+      }
+
+      sessionsById.set(sessionId, {
+        ...session,
+        sessionStatus: state,
+      });
+    },
+    async markSessionRead(sessionId: string) {
+      hooks?.onMarkSessionRead?.(sessionId);
+
+      const session = sessionsById.get(sessionId);
+      if (!session) {
+        return;
+      }
+
+      sessionsById.set(sessionId, {
+        ...session,
+        hasUnread: false,
+      });
+    },
+    async markSessionUnread(sessionId: string) {
+      hooks?.onMarkSessionUnread?.(sessionId);
+
+      const session = sessionsById.get(sessionId);
+      if (!session) {
+        return;
+      }
+
+      sessionsById.set(sessionId, {
+        ...session,
+        hasUnread: true,
+      });
+    },
+    async setSessionPermissionMode(sessionId: string, mode: PermissionModeDTO) {
+      hooks?.onSetSessionPermissionMode?.(sessionId, mode);
+
+      const session = sessionsById.get(sessionId);
+      if (!session) {
+        return;
+      }
+
+      sessionsById.set(sessionId, {
+        ...session,
+        permissionMode: mode,
+      });
     },
     async cancelProcessing(sessionId: string) {
       hooks?.onCancelProcessing?.(sessionId);
@@ -861,6 +1009,85 @@ export function createTestServer(options: TestServerOptions = {}): GatewayServer
 
           json(sendResult.status ?? MESSAGE_SEND_ACCEPTED_STATUS, {
             status: 'accepted',
+          });
+        },
+      },
+      {
+        method: 'POST',
+        path: '/api/sessions/:sessionId/commands',
+        handler: async ({ req, params, parseJsonBody, error, json }) => {
+          const auth = requireAuth(req.headers.authorization);
+          if (!auth.authorized) {
+            error(401, 'unauthorized', 'Authorization required');
+            return;
+          }
+
+          const sessionId = params.sessionId;
+          if (!sessionId) {
+            error(404, 'session_not_found', 'Session not found');
+            return;
+          }
+
+          const session = await getSessionOrNull(sessionManager, sessionId);
+          if (!session) {
+            error(404, 'session_not_found', 'Session not found');
+            return;
+          }
+
+          const payload = await parseJsonBody<unknown>();
+          const commandResult = parseSessionCommand(payload);
+
+          if ('error' in commandResult) {
+            error(400, 'invalid_request', commandResult.error);
+            return;
+          }
+
+          sessionWorkspaceCache.set(sessionId, session.workspaceId);
+
+          switch (commandResult.command.type) {
+            case 'rename': {
+              await sessionManager.renameSession(sessionId, commandResult.command.name);
+              await fanoutEvent({
+                type: 'name_changed',
+                sessionId,
+                name: commandResult.command.name,
+              });
+              break;
+            }
+
+            case 'setSessionStatus': {
+              await sessionManager.setSessionStatus(sessionId, commandResult.command.state);
+              await fanoutEvent({
+                type: 'session_status_changed',
+                sessionId,
+                sessionStatus: commandResult.command.state,
+              });
+              break;
+            }
+
+            case 'markRead': {
+              await sessionManager.markSessionRead(sessionId);
+              break;
+            }
+
+            case 'markUnread': {
+              await sessionManager.markSessionUnread(sessionId);
+              break;
+            }
+
+            case 'setPermissionMode': {
+              await sessionManager.setSessionPermissionMode(sessionId, commandResult.command.mode);
+              await fanoutEvent({
+                type: 'permission_mode_changed',
+                sessionId,
+                permissionMode: commandResult.command.mode,
+              });
+              break;
+            }
+          }
+
+          json(200, {
+            status: 'ok',
           });
         },
       },
