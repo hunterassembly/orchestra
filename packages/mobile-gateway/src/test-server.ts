@@ -820,6 +820,8 @@ export function createTestServer(options: TestServerOptions = {}): GatewayServer
   const accessTokenTtlMs = options.accessTokenTtlMs ?? DEFAULT_ACCESS_TOKEN_TTL_MS;
   const refreshTokenTtlMs = options.refreshTokenTtlMs ?? DEFAULT_REFRESH_TOKEN_TTL_MS;
   const sseClientsByWorkspace = new Map<string, Set<ServerResponse>>();
+  const sseClientsByDevice = new Map<string, Set<ServerResponse>>();
+  const sseClientMetadata = new Map<ServerResponse, { workspaceId: string; deviceId: string }>();
   const sessionWorkspaceCache = new Map<string, string>();
   const pairingCodes = new Map<string, PairingCodeRecord>();
   const accessTokens = new Map<string, AccessTokenRecord>([
@@ -827,21 +829,40 @@ export function createTestServer(options: TestServerOptions = {}): GatewayServer
   ]);
   const refreshTokens = new Map<string, RefreshTokenRecord>();
 
-  const addClient = (workspaceId: string, response: ServerResponse): void => {
+  const addClient = (workspaceId: string, deviceId: string, response: ServerResponse): void => {
     const workspaceClients = sseClientsByWorkspace.get(workspaceId) ?? new Set<ServerResponse>();
     workspaceClients.add(response);
     sseClientsByWorkspace.set(workspaceId, workspaceClients);
+
+    const deviceClients = sseClientsByDevice.get(deviceId) ?? new Set<ServerResponse>();
+    deviceClients.add(response);
+    sseClientsByDevice.set(deviceId, deviceClients);
+
+    sseClientMetadata.set(response, { workspaceId, deviceId });
   };
 
-  const removeClient = (workspaceId: string, response: ServerResponse): void => {
-    const workspaceClients = sseClientsByWorkspace.get(workspaceId);
-    if (!workspaceClients) {
+  const removeClient = (response: ServerResponse): void => {
+    const metadata = sseClientMetadata.get(response);
+    if (!metadata) {
       return;
     }
 
-    workspaceClients.delete(response);
-    if (workspaceClients.size === 0) {
-      sseClientsByWorkspace.delete(workspaceId);
+    sseClientMetadata.delete(response);
+
+    const workspaceClients = sseClientsByWorkspace.get(metadata.workspaceId);
+    if (workspaceClients) {
+      workspaceClients.delete(response);
+      if (workspaceClients.size === 0) {
+        sseClientsByWorkspace.delete(metadata.workspaceId);
+      }
+    }
+
+    const deviceClients = sseClientsByDevice.get(metadata.deviceId);
+    if (deviceClients) {
+      deviceClients.delete(response);
+      if (deviceClients.size === 0) {
+        sseClientsByDevice.delete(metadata.deviceId);
+      }
     }
   };
 
@@ -849,10 +870,33 @@ export function createTestServer(options: TestServerOptions = {}): GatewayServer
     response.write(`event: ${type}\ndata: ${JSON.stringify(payload)}\n\n`);
   };
 
-  const cleanupResponse = (workspaceId: string, response: ServerResponse): void => {
-    removeClient(workspaceId, response);
+  const cleanupResponse = (response: ServerResponse): void => {
+    removeClient(response);
     if (!response.writableEnded) {
       response.end();
+    }
+  };
+
+  const revokeDevice = (deviceId: string): void => {
+    for (const [accessToken, tokenRecord] of accessTokens.entries()) {
+      if (tokenRecord.deviceId === deviceId) {
+        accessTokens.delete(accessToken);
+      }
+    }
+
+    for (const [refreshToken, refreshRecord] of refreshTokens.entries()) {
+      if (refreshRecord.deviceId === deviceId) {
+        refreshTokens.delete(refreshToken);
+      }
+    }
+
+    const deviceClients = sseClientsByDevice.get(deviceId);
+    if (!deviceClients) {
+      return;
+    }
+
+    for (const response of [...deviceClients]) {
+      cleanupResponse(response);
     }
   };
 
@@ -860,7 +904,7 @@ export function createTestServer(options: TestServerOptions = {}): GatewayServer
     for (const [workspaceId, responses] of sseClientsByWorkspace.entries()) {
       for (const response of responses) {
         if (response.destroyed || response.writableEnded) {
-          removeClient(workspaceId, response);
+          removeClient(response);
           continue;
         }
 
@@ -897,7 +941,7 @@ export function createTestServer(options: TestServerOptions = {}): GatewayServer
 
     for (const response of workspaceClients) {
       if (response.destroyed || response.writableEnded) {
-        removeClient(workspaceId, response);
+        removeClient(response);
         continue;
       }
 
@@ -1041,6 +1085,29 @@ export function createTestServer(options: TestServerOptions = {}): GatewayServer
         },
       },
       {
+        method: 'POST',
+        path: '/api/devices/:deviceId/revoke',
+        handler: async ({ req, params, error, json }) => {
+          const auth = requireAuth(req.headers.authorization, accessTokens);
+          if (!auth.authorized) {
+            error(auth.status, auth.code, auth.message);
+            return;
+          }
+
+          const deviceId = params.deviceId;
+          if (!deviceId) {
+            error(400, 'invalid_request', 'deviceId is required');
+            return;
+          }
+
+          revokeDevice(deviceId);
+
+          json(200, {
+            status: 'ok',
+          });
+        },
+      },
+      {
         method: 'GET',
         path: '/api/workspaces',
         handler: async ({ req, error, json }) => {
@@ -1084,10 +1151,10 @@ export function createTestServer(options: TestServerOptions = {}): GatewayServer
           res.socket?.setKeepAlive(true);
           res.socket?.setTimeout(0);
 
-          addClient(workspaceId, res);
+          addClient(workspaceId, auth.deviceId, res);
 
           const onClose = (): void => {
-            cleanupResponse(workspaceId, res);
+            cleanupResponse(res);
           };
 
           req.once('close', onClose);
@@ -1459,10 +1526,8 @@ export function createTestServer(options: TestServerOptions = {}): GatewayServer
       unsubscribeBroadcast();
       clearInterval(heartbeatTimer);
 
-      for (const [workspaceId, responses] of sseClientsByWorkspace.entries()) {
-        for (const response of responses) {
-          cleanupResponse(workspaceId, response);
-        }
+      for (const response of [...sseClientMetadata.keys()]) {
+        cleanupResponse(response);
       }
 
       await originalStop();

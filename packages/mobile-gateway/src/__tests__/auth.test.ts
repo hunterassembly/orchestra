@@ -8,7 +8,7 @@ import type {
   WorkspaceDTO,
 } from '@craft-agent/mobile-contracts';
 
-import { createTestServer } from '../test-server.ts';
+import { createTestServer, type TestServerOptions } from '../test-server.ts';
 import type { GatewayServer } from '../index.ts';
 
 const TEST_HOST = '127.0.0.1';
@@ -28,11 +28,46 @@ afterEach(async () => {
   }
 });
 
-async function startServer(): Promise<{ server: GatewayServer; port: number }> {
-  const server = createTestServer({ host: TEST_HOST, port: 0 });
+async function startServer(options: Omit<TestServerOptions, 'host' | 'port'> = {}): Promise<{ server: GatewayServer; port: number }> {
+  const server = createTestServer({ host: TEST_HOST, port: 0, ...options });
   startedServers.push(server);
   const { port } = await server.start();
   return { server, port };
+}
+
+async function waitForStreamClose(response: Response, timeoutMs = 1_500): Promise<void> {
+  if (!response.body) {
+    throw new Error('Expected SSE response body');
+  }
+
+  const reader = response.body.getReader();
+
+  const closePromise = (async () => {
+    while (true) {
+      const chunk = await reader.read();
+      if (chunk.done) {
+        return;
+      }
+    }
+  })();
+
+  let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
+
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeoutHandle = setTimeout(() => {
+      reject(new Error('Timed out waiting for SSE stream to close'));
+    }, timeoutMs);
+  });
+
+  try {
+    await Promise.race([closePromise, timeoutPromise]);
+  } finally {
+    if (timeoutHandle) {
+      clearTimeout(timeoutHandle);
+    }
+
+    await reader.cancel();
+  }
 }
 
 async function pairDevice(port: number): Promise<{ pairing: PairingStartResponse; confirmation: PairingConfirmResponse }> {
@@ -256,5 +291,92 @@ describe('pairing and token auth', () => {
       code: 'invalid_refresh_token',
       message: 'Refresh token is invalid or expired',
     });
+  });
+
+  it('POST /api/devices/:deviceId/revoke invalidates all tokens for the revoked device', async () => {
+    const { port } = await startServer();
+    const { confirmation: revokedDevice } = await pairDevice(port);
+    const { confirmation: actorDevice } = await pairDevice(port);
+
+    const initialResponse = await fetch(`http://${TEST_HOST}:${port}/api/workspaces`, {
+      headers: {
+        authorization: `Bearer ${revokedDevice.accessToken}`,
+      },
+    });
+    expect(initialResponse.status).toBe(200);
+
+    const revokeResponse = await fetch(
+      `http://${TEST_HOST}:${port}/api/devices/${revokedDevice.deviceId}/revoke`,
+      {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${actorDevice.accessToken}`,
+        },
+      }
+    );
+
+    expect(revokeResponse.status).toBe(200);
+
+    const revokedAccessResponse = await fetch(`http://${TEST_HOST}:${port}/api/workspaces`, {
+      headers: {
+        authorization: `Bearer ${revokedDevice.accessToken}`,
+      },
+    });
+    expect([401, 403]).toContain(revokedAccessResponse.status);
+
+    const revokedRefreshResponse = await fetch(`http://${TEST_HOST}:${port}/api/pair/refresh`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        refreshToken: revokedDevice.refreshToken,
+      }),
+    });
+    expect([401, 403]).toContain(revokedRefreshResponse.status);
+
+    const unaffectedResponse = await fetch(`http://${TEST_HOST}:${port}/api/workspaces`, {
+      headers: {
+        authorization: `Bearer ${actorDevice.accessToken}`,
+      },
+    });
+    expect(unaffectedResponse.status).toBe(200);
+  });
+
+  it('revoking a device terminates active SSE connections for that device', async () => {
+    const { port } = await startServer({
+      sseHeartbeatIntervalMs: 25,
+    });
+    const { confirmation: revokedDevice } = await pairDevice(port);
+    const { confirmation: actorDevice } = await pairDevice(port);
+
+    const sseResponse = await fetch(`http://${TEST_HOST}:${port}/api/workspaces/default/events`, {
+      headers: {
+        authorization: `Bearer ${revokedDevice.accessToken}`,
+      },
+    });
+
+    expect(sseResponse.status).toBe(200);
+    expect(sseResponse.headers.get('content-type')).toContain('text/event-stream');
+
+    const revokeResponse = await fetch(
+      `http://${TEST_HOST}:${port}/api/devices/${revokedDevice.deviceId}/revoke`,
+      {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${actorDevice.accessToken}`,
+        },
+      }
+    );
+
+    expect(revokeResponse.status).toBe(200);
+    await waitForStreamClose(sseResponse);
+
+    const revokedAccessResponse = await fetch(`http://${TEST_HOST}:${port}/api/workspaces`, {
+      headers: {
+        authorization: `Bearer ${revokedDevice.accessToken}`,
+      },
+    });
+    expect([401, 403]).toContain(revokedAccessResponse.status);
   });
 });
