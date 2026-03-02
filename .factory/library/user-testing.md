@@ -73,3 +73,44 @@ Report format:
   "toolsUsed": ["curl", "python3"]
 }
 ```
+
+## Flow Validator Guidance: Gateway Messaging Auth (curl)
+
+**Server URL:** http://localhost:7842
+**Auth token:** Use `Bearer test-token` (pre-seeded legacy token). For auth-specific testing that needs real tokens, use the pairing flow: POST /api/pair/start + POST /api/pair/confirm.
+**Default workspace ID:** `default`
+**Default workspace name:** `Default Workspace`
+**Seeded session:** `seeded-session-1` (has 2 messages, workspace=`default`)
+
+### How to obtain a real auth token (pairing flow)
+```bash
+PAIR=$(curl -sf -X POST http://localhost:7842/api/pair/start)
+PAIRING_ID=$(echo "$PAIR" | python3 -c "import json,sys; print(json.load(sys.stdin)['pairingId'])")
+CODE=$(echo "$PAIR" | python3 -c "import json,sys; print(json.load(sys.stdin)['code'])")
+CONFIRM=$(curl -sf -X POST -H "Content-Type: application/json" \
+  -d "{\"pairingId\": \"$PAIRING_ID\", \"code\": \"$CODE\"}" \
+  http://localhost:7842/api/pair/confirm)
+ACCESS_TOKEN=$(echo "$CONFIRM" | python3 -c "import json,sys; print(json.load(sys.stdin)['accessToken'])")
+REFRESH_TOKEN=$(echo "$CONFIRM" | python3 -c "import json,sys; print(json.load(sys.stdin)['refreshToken'])")
+DEVICE_ID=$(echo "$CONFIRM" | python3 -c "import json,sys; print(json.load(sys.stdin)['deviceId'])")
+```
+
+### Isolation Rules for gateway-messaging-auth
+- Each subagent should create their own sessions using unique names prefixed with group ID
+- Session IDs are auto-generated (`session-1`, `session-2`, etc.) — each subagent creates fresh sessions
+- For auth testing, each subagent should pair independently to get unique tokens/devices
+- Do NOT use or delete the seeded session `seeded-session-1` unless specifically testing with it
+- SSE connections are workspace-scoped to `default` workspace
+
+### Test Server Behavior Notes
+- The mock `sendMessage` returns a simulated sequence: user_message → text_delta → tool_start → tool_result → text_complete → complete (with tokenUsage)
+- `cancelProcessing` only returns true if session.isProcessing is true (seeded sessions have isProcessing=false, so interrupt is no-op for them)
+- `killShell` returns true only if the shellId is in session.activeShellIds (seeded sessions have empty activeShellIds)
+- For interrupt testing with actual interrupted event: need to set isProcessing=true on session beforehand (create a processing session via hooks or accept that interrupt on idle is no-op per VAL-MSG-005)
+- Pairing codes expire based on server TTL (default 5 minutes). For expiry testing, the test server can be started with custom TTL.
+- Attachment upload supports both multipart/form-data and JSON with base64 data
+- Supported MIME types: image/*, application/pdf, text/*
+- Max attachment size: 5MB
+
+### Writing flow reports
+Write JSON report to: `.factory/validation/gateway-messaging-auth/user-testing/flows/<group-id>.json`

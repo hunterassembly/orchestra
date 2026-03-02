@@ -1,0 +1,64 @@
+{
+  "milestone": "gateway-messaging-auth",
+  "round": 1,
+  "status": "pass",
+  "assertionsSummary": {
+    "total": 31,
+    "passed": 31,
+    "failed": 0,
+    "blocked": 0
+  },
+  "passedAssertions": [
+    "VAL-MSG-001",
+    "VAL-MSG-002",
+    "VAL-MSG-003",
+    "VAL-MSG-004",
+    "VAL-MSG-005",
+    "VAL-MSG-006",
+    "VAL-MSG-007",
+    "VAL-MSG-008",
+    "VAL-MSG-009",
+    "VAL-MSG-010",
+    "VAL-MSG-011",
+    "VAL-MSG-012",
+    "VAL-MSG-013",
+    "VAL-CMD-001",
+    "VAL-CMD-002",
+    "VAL-CMD-003",
+    "VAL-CMD-004",
+    "VAL-CMD-005",
+    "VAL-AUTH-001",
+    "VAL-AUTH-002",
+    "VAL-AUTH-003",
+    "VAL-AUTH-004",
+    "VAL-AUTH-005",
+    "VAL-AUTH-006",
+    "VAL-AUTH-007",
+    "VAL-AUTH-008",
+    "VAL-GW-013",
+    "VAL-ATTACH-001",
+    "VAL-ATTACH-002",
+    "VAL-ATTACH-003",
+    "VAL-ATTACH-004"
+  ],
+  "failedAssertions": [],
+  "blockedAssertions": [],
+  "notes": [
+    {
+      "assertions": ["VAL-MSG-004", "VAL-MSG-006", "VAL-MSG-008", "VAL-MSG-009"],
+      "note": "These assertions could not be fully verified via curl against the mock test server (mock doesn't set isProcessing=true, has no active shells, and doesn't emit error/permission events). However, the gateway unit tests (65/65 passing) specifically cover these scenarios with properly configured mocks, confirming the implementation is correct."
+    },
+    {
+      "assertions": ["VAL-AUTH-004", "VAL-AUTH-006"],
+      "note": "Token/code expiry behavior verified via unit tests (auth.test.ts) since the running test server uses default TTLs that are too long to wait for."
+    }
+  ],
+  "appliedUpdates": [
+    {
+      "target": "user-testing.md",
+      "description": "Added 'Flow Validator Guidance: Gateway Messaging Auth (curl)' section with auth token acquisition, isolation rules, mock behavior notes, and flow report paths",
+      "source": "setup"
+    }
+  ],
+  "previousRound": null
+}

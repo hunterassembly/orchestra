@@ -1,0 +1,294 @@
+{
+  "groupId": "messaging",
+  "testedAt": "2026-03-02T15:26:37Z",
+  "credentials": {
+    "account": "Bearer test-token",
+    "namespace": "msg-group"
+  },
+  "toolsUsed": [
+    "curl",
+    "python3"
+  ],
+  "assertions": [
+    {
+      "id": "VAL-MSG-001",
+      "title": "Send message accepts and emits user_message",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "POST /api/sessions/session-4/messages with text + options",
+          "expected": "HTTP 200/202 and SSE user_message with status accepted",
+          "observed": "HTTP 202 with {status: accepted}; SSE user_message event with status accepted and message content"
+        }
+      ],
+      "evidence": {
+        "screenshots": [],
+        "consoleErrors": "n/a (curl)",
+        "network": "POST /api/sessions/session-4/messages -> 202",
+        "sse": "/var/folders/ms/mbynfyt95pvflcys1q_x1nv00000gn/T/droid-bg-1772465000097.out (user_message event for session-4)"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-MSG-002",
+      "title": "Streaming text events via SSE",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Send message and capture SSE stream",
+          "expected": "text_delta events followed by text_complete with full text",
+          "observed": "SSE text_delta then text_complete: 'Simulated response for: Second message from msg-group-1'"
+        }
+      ],
+      "evidence": {
+        "screenshots": [],
+        "consoleErrors": "n/a (curl)",
+        "network": "POST /api/sessions/session-4/messages -> 202",
+        "sse": "/var/folders/ms/mbynfyt95pvflcys1q_x1nv00000gn/T/droid-bg-1772465000097.out (text_delta + text_complete)"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-MSG-003",
+      "title": "Tool events stream correctly",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Send message and capture SSE stream",
+          "expected": "tool_start followed by tool_result with matching toolUseId",
+          "observed": "SSE tool_start then tool_result for toolUseId 'tool-3'"
+        }
+      ],
+      "evidence": {
+        "screenshots": [],
+        "consoleErrors": "n/a (curl)",
+        "network": "POST /api/sessions/session-4/messages -> 202",
+        "sse": "/var/folders/ms/mbynfyt95pvflcys1q_x1nv00000gn/T/droid-bg-1772465000097.out (tool_start/tool_result)"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-MSG-004",
+      "title": "Interrupt active processing",
+      "status": "blocked",
+      "steps": [
+        {
+          "action": "POST /api/sessions/session-6/interrupt",
+          "expected": "HTTP 200 and SSE interrupted event when processing",
+          "observed": "HTTP 200; no interrupted event observed because mock sessions start with isProcessing=false"
+        }
+      ],
+      "evidence": {
+        "screenshots": [],
+        "consoleErrors": "n/a (curl)",
+        "network": "POST /api/sessions/session-6/interrupt -> 200",
+        "sse": "No interrupted event emitted in mock; see test-server note for isProcessing=false"
+      },
+      "issues": "Mock session manager never sets isProcessing=true, so cancelProcessing returns false and interrupted event cannot be emitted. Endpoint returns 200 as expected."
+    },
+    {
+      "id": "VAL-MSG-005",
+      "title": "Interrupt is no-op when idle",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "POST /api/sessions/session-6/interrupt while idle",
+          "expected": "HTTP 200 with no adverse effects",
+          "observed": "HTTP 200 {status: ok}"
+        }
+      ],
+      "evidence": {
+        "screenshots": [],
+        "consoleErrors": "n/a (curl)",
+        "network": "POST /api/sessions/session-6/interrupt -> 200"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-MSG-006",
+      "title": "Kill background shell",
+      "status": "blocked",
+      "steps": [
+        {
+          "action": "POST /api/sessions/session-6/shells/shell-1/kill",
+          "expected": "HTTP 200 and SSE shell_killed for active shell",
+          "observed": "HTTP 404 shell_not_found for unknown shell (no active shells in mock session)"
+        }
+      ],
+      "evidence": {
+        "screenshots": [],
+        "consoleErrors": "n/a (curl)",
+        "network": "POST /api/sessions/session-6/shells/shell-1/kill -> 404 {code: shell_not_found}"
+      },
+      "issues": "Mock sessions have empty activeShellIds; killShell returns 404 for unknown shells, so shell_killed event cannot be verified."
+    },
+    {
+      "id": "VAL-MSG-007",
+      "title": "Complete event with token usage",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Send message and capture SSE stream",
+          "expected": "complete event with tokenUsage fields",
+          "observed": "SSE complete event includes tokenUsage (inputTokens/outputTokens/totalTokens/contextTokens/costUsd)"
+        }
+      ],
+      "evidence": {
+        "screenshots": [],
+        "consoleErrors": "n/a (curl)",
+        "network": "POST /api/sessions/session-4/messages -> 202",
+        "sse": "/var/folders/ms/mbynfyt95pvflcys1q_x1nv00000gn/T/droid-bg-1772465000097.out (complete event with tokenUsage)"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-MSG-008",
+      "title": "Error and typed_error events",
+      "status": "blocked",
+      "steps": [
+        {
+          "action": "Attempt to trigger error/typed_error events via mock sendMessage",
+          "expected": "SSE error and/or typed_error events",
+          "observed": "Mock sendMessage does not emit error events; verified serialization coverage in tests"
+        }
+      ],
+      "evidence": {
+        "screenshots": [],
+        "consoleErrors": "n/a (curl)",
+        "network": "N/A (no error event produced by mock)",
+        "tests": "packages/mobile-gateway/src/__tests__/session-serializers.test.ts (serializes error and typed_error events)"
+      },
+      "issues": "Mock server does not generate error/typed_error events during sendMessage; only serialization verified via unit tests."
+    },
+    {
+      "id": "VAL-MSG-009",
+      "title": "Permission request event",
+      "status": "blocked",
+      "steps": [
+        {
+          "action": "Attempt to trigger permission_request event",
+          "expected": "SSE permission_request with request payload",
+          "observed": "Mock server does not emit permission_request; serialization verified in unit tests"
+        }
+      ],
+      "evidence": {
+        "screenshots": [],
+        "consoleErrors": "n/a (curl)",
+        "network": "N/A (no permission_request produced by mock)",
+        "tests": "packages/mobile-gateway/src/__tests__/session-serializers.test.ts (serializes permission_request and credential_request)"
+      },
+      "issues": "Mock server does not generate permission_request events; only serialization verified via unit tests."
+    },
+    {
+      "id": "VAL-MSG-010",
+      "title": "Send message validates input",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "POST /api/sessions/session-6/messages with blank text",
+          "expected": "HTTP 400 validation error",
+          "observed": "HTTP 400 {code: invalid_request, message: 'Message text is required'}"
+        },
+        {
+          "action": "POST with invalid options (optimisticMessageId empty string)",
+          "expected": "HTTP 400 validation error",
+          "observed": "HTTP 400 invalid_request (options rejected)"
+        }
+      ],
+      "evidence": {
+        "screenshots": [],
+        "consoleErrors": "n/a (curl)",
+        "network": "POST /api/sessions/session-6/messages -> 400 (blank text); POST -> 400 (invalid options)"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-MSG-011",
+      "title": "Core streaming events have correct DTO shape",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Send message and observe SSE stream",
+          "expected": "text_delta, text_complete, tool_start, tool_result, complete, user_message payloads match DTO shapes",
+          "observed": "SSE payloads include required fields and types for session-4"
+        }
+      ],
+      "evidence": {
+        "screenshots": [],
+        "consoleErrors": "n/a (curl)",
+        "sse": "/var/folders/ms/mbynfyt95pvflcys1q_x1nv00000gn/T/droid-bg-1772465000097.out",
+        "tests": "packages/mobile-gateway/src/__tests__/messages.test.ts (streams and validates core event shapes)"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-MSG-012",
+      "title": "Session lifecycle events have correct DTO shape",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Create and delete session",
+          "expected": "SSE session_created and session_deleted events with correct fields",
+          "observed": "SSE session_created and session_deleted for session-5"
+        }
+      ],
+      "evidence": {
+        "screenshots": [],
+        "consoleErrors": "n/a (curl)",
+        "sse": "/var/folders/ms/mbynfyt95pvflcys1q_x1nv00000gn/T/droid-bg-1772465053653.out",
+        "tests": "packages/mobile-gateway/src/__tests__/session-serializers.test.ts (session lifecycle and usage_update serialization)"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-MSG-013",
+      "title": "Interactive events have correct DTO shape",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Send message and review SSE for user_message",
+          "expected": "user_message event contains nested message DTO",
+          "observed": "SSE user_message payload includes message object with required fields"
+        },
+        {
+          "action": "Review serializer tests for permission_request and credential_request",
+          "expected": "Nested request DTOs serialized correctly",
+          "observed": "Unit tests validate request object shapes"
+        }
+      ],
+      "evidence": {
+        "screenshots": [],
+        "consoleErrors": "n/a (curl)",
+        "sse": "/var/folders/ms/mbynfyt95pvflcys1q_x1nv00000gn/T/droid-bg-1772465000097.out (user_message)",
+        "tests": "packages/mobile-gateway/src/__tests__/session-serializers.test.ts (permission_request/credential_request serialization)"
+      },
+      "issues": null
+    }
+  ],
+  "frictions": [],
+  "blockers": [
+    {
+      "description": "Mock session manager never sets isProcessing=true, so interrupted SSE event cannot be emitted for VAL-MSG-004.",
+      "affectedAssertions": [
+        "VAL-MSG-004"
+      ],
+      "quickFixAttempted": "Verified interrupt endpoint returns 200; no way to set isProcessing via API in mock."
+    },
+    {
+      "description": "Mock sessions have no activeShellIds, so shell_killed SSE event cannot be produced for VAL-MSG-006.",
+      "affectedAssertions": [
+        "VAL-MSG-006"
+      ],
+      "quickFixAttempted": "Attempted kill on shell-1; received 404 shell_not_found."
+    },
+    {
+      "description": "Mock sendMessage does not emit error/typed_error or permission_request events for VAL-MSG-008/009.",
+      "affectedAssertions": [
+        "VAL-MSG-008",
+        "VAL-MSG-009"
+      ],
+      "quickFixAttempted": "Verified serialization coverage in session-serializers unit tests."
+    }
+  ],
+  "summary": "Tested 13 messaging assertions: 9 passed, 4 blocked due to mock limitations (interrupt active processing, shell_killed, error/typed_error, permission_request)."
+}

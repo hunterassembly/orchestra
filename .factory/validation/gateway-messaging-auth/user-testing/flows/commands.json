@@ -1,0 +1,139 @@
+{
+  "groupId": "cmd-group",
+  "testedAt": "2026-03-02T15:22:55Z",
+  "credentials": {
+    "account": "Bearer test-token",
+    "namespace": "cmd-group"
+  },
+  "toolsUsed": ["curl"],
+  "assertions": [
+    {
+      "id": "VAL-CMD-001",
+      "title": "Rename session command",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "POST /api/sessions/session-2/commands {type: rename, name: New Name}",
+          "expected": "HTTP 200 and name_changed SSE event",
+          "observed": "HTTP 200; SSE name_changed event for session-2 with name 'New Name'"
+        },
+        {
+          "action": "GET /api/sessions/session-2",
+          "expected": "Session name updated to New Name",
+          "observed": "name=New Name"
+        }
+      ],
+      "evidence": {
+        "screenshots": [],
+        "consoleErrors": "n/a",
+        "network": "POST /api/sessions/session-2/commands -> 200; GET /api/sessions/session-2 -> 200",
+        "sse": "event: name_changed data: {sessionId: session-2, name: New Name}"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-CMD-002",
+      "title": "Set session status command",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "POST /api/sessions/session-2/commands {type: setSessionStatus, state: in_progress}",
+          "expected": "HTTP 200 and session_status_changed SSE event",
+          "observed": "HTTP 200; SSE session_status_changed event for session-2 with sessionStatus in_progress"
+        },
+        {
+          "action": "GET /api/sessions/session-2",
+          "expected": "sessionStatus updated to in_progress",
+          "observed": "sessionStatus=in_progress"
+        }
+      ],
+      "evidence": {
+        "screenshots": [],
+        "consoleErrors": "n/a",
+        "network": "POST /api/sessions/session-2/commands -> 200; GET /api/sessions/session-2 -> 200",
+        "sse": "event: session_status_changed data: {sessionId: session-2, sessionStatus: in_progress}"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-CMD-003",
+      "title": "Mark read/unread commands",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "POST /api/sessions/session-2/commands {type: markUnread}",
+          "expected": "HTTP 200 and hasUnread becomes true",
+          "observed": "HTTP 200; GET shows hasUnread=true"
+        },
+        {
+          "action": "POST /api/sessions/session-2/commands {type: markRead}",
+          "expected": "HTTP 200 and hasUnread becomes false",
+          "observed": "HTTP 200; GET shows hasUnread=false"
+        }
+      ],
+      "evidence": {
+        "screenshots": [],
+        "consoleErrors": "n/a",
+        "network": "POST markUnread -> 200; GET -> hasUnread true; POST markRead -> 200; GET -> hasUnread false",
+        "sse": "not required"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-CMD-004",
+      "title": "Set permission mode command",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "POST /api/sessions/session-2/commands {type: setPermissionMode, mode: ask}",
+          "expected": "HTTP 200 and permission_mode_changed SSE event",
+          "observed": "HTTP 200; SSE permission_mode_changed event for session-2 with permissionMode ask"
+        },
+        {
+          "action": "GET /api/sessions/session-2",
+          "expected": "permissionMode updated to ask",
+          "observed": "permissionMode=ask"
+        }
+      ],
+      "evidence": {
+        "screenshots": [],
+        "consoleErrors": "n/a",
+        "network": "POST /api/sessions/session-2/commands -> 200; GET /api/sessions/session-2 -> 200",
+        "sse": "event: permission_mode_changed data: {sessionId: session-2, permissionMode: ask}"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-CMD-005",
+      "title": "Commands validate input",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "POST /api/sessions/session-2/commands {type: unknownCommand}",
+          "expected": "HTTP 400 with validation error",
+          "observed": "HTTP 400; code=invalid_request; message=Unknown command type"
+        },
+        {
+          "action": "POST /api/sessions/session-2/commands {type: rename, name: ''}",
+          "expected": "HTTP 400 with validation error",
+          "observed": "HTTP 400; code=invalid_request; message=rename command requires a non-empty name"
+        },
+        {
+          "action": "POST /api/sessions/session-2/commands {type: setPermissionMode, mode: invalid}",
+          "expected": "HTTP 400 with validation error",
+          "observed": "HTTP 400; code=invalid_request; message=setPermissionMode command requires a valid mode"
+        }
+      ],
+      "evidence": {
+        "screenshots": [],
+        "consoleErrors": "n/a",
+        "network": "All invalid command POSTs returned 400 with validation errors",
+        "sse": "not required"
+      },
+      "issues": null
+    }
+  ],
+  "frictions": [],
+  "blockers": [],
+  "summary": "Tested 5 assertions: all passed for session-2 using Bearer test-token; SSE events observed for rename, session status change, and permission mode change."
+}

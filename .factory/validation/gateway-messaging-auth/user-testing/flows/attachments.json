@@ -1,0 +1,106 @@
+{
+  "groupId": "attachments",
+  "testedAt": "2026-03-02T15:21:54.984341+00:00",
+  "credentials": {
+    "account": "Bearer test-token",
+    "namespace": "attach-group"
+  },
+  "toolsUsed": [
+    "curl",
+    "python3"
+  ],
+  "assertions": [
+    {
+      "id": "VAL-ATTACH-001",
+      "title": "Upload attachment returns file reference",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "POST /api/workspaces/default/sessions {name: attach-group-test}",
+          "expected": "201 and session DTO returned",
+          "observed": "201 with session id session-3"
+        },
+        {
+          "action": "POST /api/sessions/session-3/attachments (base64 JSON, image/png)",
+          "expected": "200/201 with attachment DTO",
+          "observed": "201 with {id, name, mimeType, size}"
+        }
+      ],
+      "evidence": {
+        "network": "POST /api/sessions/session-3/attachments -> 201",
+        "response": {
+          "id": "att_26df6b5e-6fbd-480a-aac5-1e33501dca75",
+          "name": "tiny.png",
+          "mimeType": "image/png",
+          "size": 70
+        }
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-ATTACH-002",
+      "title": "Upload validates MIME type",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "POST /api/sessions/session-3/attachments (mimeType application/zip)",
+          "expected": "415 Unsupported Media Type",
+          "observed": "415 with unsupported_media_type error"
+        }
+      ],
+      "evidence": {
+        "network": "POST /api/sessions/session-3/attachments -> 415",
+        "response": {
+          "code": "unsupported_media_type",
+          "message": "Attachment MIME type is not supported"
+        }
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-ATTACH-003",
+      "title": "Upload enforces size limit",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "POST /api/sessions/session-3/attachments with >5MB base64 payload",
+          "expected": "413 Payload Too Large",
+          "observed": "413 with payload_too_large error"
+        }
+      ],
+      "evidence": {
+        "network": "POST /api/sessions/session-3/attachments -> 413",
+        "response": {
+          "code": "payload_too_large",
+          "message": "Attachment exceeds maximum allowed size"
+        }
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-ATTACH-004",
+      "title": "Uploaded attachment usable in messages",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "POST /api/sessions/session-3/messages with attachments [att_26df6b5e-6fbd-480a-aac5-1e33501dca75]",
+          "expected": "200/202 accepted",
+          "observed": "202 with status accepted"
+        },
+        {
+          "action": "GET /api/sessions/session-3",
+          "expected": "Message content includes attachment reference",
+          "observed": "User message includes [attachment:att_26df6b5e-6fbd-480a-aac5-1e33501dca75] tiny.png"
+        }
+      ],
+      "evidence": {
+        "network": "POST /api/sessions/session-3/messages -> 202; GET /api/sessions/session-3 -> 200",
+        "messagePreview": "Check this file\n\n[attachment:att_26df6b5e-6fbd-480a-aac5-1e33501dca75] tiny.png"
+      },
+      "issues": null
+    }
+  ],
+  "frictions": [],
+  "blockers": [],
+  "summary": "Tested 4 assertions: all passed (VAL-ATTACH-001..004)."
+}
