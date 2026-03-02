@@ -45,7 +45,7 @@ export type AgentProvider = 'anthropic' | 'pi' | 'codex';
 /**
  * Permission prompt types for different tool categories.
  */
-export type PermissionRequestType = 'bash' | 'file_write' | 'mcp_mutation' | 'api_mutation';
+export type PermissionRequestType = 'bash' | 'file_write' | 'mcp_mutation' | 'api_mutation' | 'admin_approval';
 
 /**
  * Permission request callback signature.
@@ -57,6 +57,13 @@ export type PermissionCallback = (request: {
   command?: string;
   description: string;
   type?: PermissionRequestType;
+  appName?: string;
+  reason?: string;
+  impact?: string;
+  requiresSystemPrompt?: boolean;
+  rememberForMinutes?: number;
+  commandHash?: string;
+  approvalTtlSeconds?: number;
 }) => void;
 
 /**
@@ -200,6 +207,14 @@ export interface CoreBackendConfig {
 
   /** Callback to get recent messages for recovery context */
   getRecoveryMessages?: () => RecoveryMessage[];
+
+  /**
+   * Optional callback to resize an oversized image for API compatibility.
+   * Called from PreToolUse when Read targets an image exceeding the base64 size limit.
+   * Returns path to the resized temp file, or null if resize not possible.
+   * Provided by the host app (Electron uses nativeImage, server could use sharp, etc.).
+   */
+  onImageResize?: (filePath: string, maxSizeBytes: number) => Promise<string | null>;
 
   /**
    * Pre-computed source configurations for initial setup.
@@ -346,6 +361,15 @@ export interface AgentBackend {
   applyBridgeUpdates(context: BridgeUpdateContext): Promise<void>;
 
   /**
+   * Ensure branch sessions are backend-ready before first user message.
+   * Called at branch creation time to avoid creating "fake branches" that have
+   * copied transcript history but no actual backend branch context.
+   *
+   * Default behavior can be a no-op for providers that don't need preflight.
+   */
+  ensureBranchReady(): Promise<void>;
+
+  /**
    * Check if currently processing a query.
    */
   isProcessing(): boolean;
@@ -388,6 +412,9 @@ export interface AgentBackend {
 
   /** Get SDK session ID (for resume, null if no session) */
   getSessionId(): string | null;
+
+  /** Whether this backend supports session branching */
+  readonly supportsBranching: boolean;
 
   // ============================================================
   // Source Management
@@ -502,7 +529,7 @@ export interface AgentBackend {
    */
   onBackendAuthRequired: ((reason: string) => void) | null;
 
-  /** Called when agent requests spawning a sub-session */
+  /** Called when agent requests spawning a new session */
   onSpawnSession: ((request: import('../base-agent.ts').SpawnSessionRequest) => Promise<import('../base-agent.ts').SpawnSessionResult>) | null;
 }
 

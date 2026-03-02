@@ -123,7 +123,7 @@ export function detectProvider(authType: string): AgentProvider {
  * const backend = createBackend({
  *   provider: 'anthropic',
  *   workspace: myWorkspace,
- *   model: 'claude-sonnet-4-5-20250929',
+ *   model: 'claude-sonnet-4-6',
  * });
  *
  * // Create Codex backend

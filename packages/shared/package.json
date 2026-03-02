@@ -1,6 +1,6 @@
 {
   "name": "@craft-agent/shared",
-  "version": "0.5.1",
+  "version": "0.6.0",
   "license": "Apache-2.0",
   "description": "Shared business logic for Craft Agents - agent, auth, config, credentials, MCP integration",
   "type": "module",
@@ -48,6 +48,7 @@
     "./validation": "./src/validation/index.ts",
     "./version": "./src/version/index.ts",
     "./branding": "./src/branding.ts",
+    "./feature-flags": "./src/feature-flags.ts",
     "./interceptor": "./src/interceptor-common.ts",
     "./search": "./src/search/index.ts",
     "./tools": "./src/tools/index.ts",
