@@ -102,7 +102,7 @@ export function createGatewayServer(config: GatewayServerConfig): GatewayServer 
     try {
       await routeMatch.handler(context);
 
-      if (!res.writableEnded) {
+      if (!res.writableEnded && !res.headersSent) {
         writeNoContent(res);
       }
     } catch (error) {

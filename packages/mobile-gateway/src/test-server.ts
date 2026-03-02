@@ -1,4 +1,5 @@
-import type { CreateSessionOptionsDTO, PermissionModeDTO, WorkspaceDTO } from '@craft-agent/mobile-contracts';
+import type { ServerResponse } from 'node:http';
+import type { CreateSessionOptionsDTO, PermissionModeDTO, SessionEventDTO, WorkspaceDTO } from '@craft-agent/mobile-contracts';
 
 import {
   createGatewayServer,
@@ -39,11 +40,13 @@ export interface TestServerOptions {
   port?: number;
   version?: string;
   sessionManager?: MockSessionManager;
+  sseHeartbeatIntervalMs?: number;
 }
 
 const DEFAULT_PORT = 7842;
 const DEFAULT_HOST = '127.0.0.1';
 const DEFAULT_VERSION = '0.0.0';
+const DEFAULT_SSE_HEARTBEAT_INTERVAL_MS = 30_000;
 const VALID_PERMISSION_MODES: PermissionModeDTO[] = ['safe', 'ask', 'allow-all'];
 
 function cloneSession(session: MockSession): MockSession {
@@ -253,8 +256,93 @@ export function createMockSessionManager(options: CreateMockSessionManagerOption
 export function createTestServer(options: TestServerOptions = {}): GatewayServer {
   const sessionManager = options.sessionManager ?? createMockSessionManager();
   const version = options.version ?? DEFAULT_VERSION;
+  const heartbeatIntervalMs = options.sseHeartbeatIntervalMs ?? DEFAULT_SSE_HEARTBEAT_INTERVAL_MS;
+  const sseClientsByWorkspace = new Map<string, Set<ServerResponse>>();
+  const sessionWorkspaceCache = new Map<string, string>();
 
-  return createGatewayServer({
+  const addClient = (workspaceId: string, response: ServerResponse): void => {
+    const workspaceClients = sseClientsByWorkspace.get(workspaceId) ?? new Set<ServerResponse>();
+    workspaceClients.add(response);
+    sseClientsByWorkspace.set(workspaceId, workspaceClients);
+  };
+
+  const removeClient = (workspaceId: string, response: ServerResponse): void => {
+    const workspaceClients = sseClientsByWorkspace.get(workspaceId);
+    if (!workspaceClients) {
+      return;
+    }
+
+    workspaceClients.delete(response);
+    if (workspaceClients.size === 0) {
+      sseClientsByWorkspace.delete(workspaceId);
+    }
+  };
+
+  const writeSseEvent = (response: ServerResponse, type: string, payload: unknown): void => {
+    response.write(`event: ${type}\ndata: ${JSON.stringify(payload)}\n\n`);
+  };
+
+  const cleanupResponse = (workspaceId: string, response: ServerResponse): void => {
+    removeClient(workspaceId, response);
+    if (!response.writableEnded) {
+      response.end();
+    }
+  };
+
+  const heartbeatTimer = setInterval(() => {
+    for (const [workspaceId, responses] of sseClientsByWorkspace.entries()) {
+      for (const response of responses) {
+        if (response.destroyed || response.writableEnded) {
+          removeClient(workspaceId, response);
+          continue;
+        }
+
+        writeSseEvent(response, 'ping', { type: 'ping' });
+      }
+    }
+  }, heartbeatIntervalMs);
+
+  const resolveSessionWorkspaceId = async (event: SessionEventDTO): Promise<string | null> => {
+    const cachedWorkspaceId = sessionWorkspaceCache.get(event.sessionId);
+    if (cachedWorkspaceId) {
+      return cachedWorkspaceId;
+    }
+
+    const session = await getSessionOrNull(sessionManager, event.sessionId);
+    if (!session) {
+      return null;
+    }
+
+    sessionWorkspaceCache.set(event.sessionId, session.workspaceId);
+    return session.workspaceId;
+  };
+
+  const fanoutEvent = async (event: SessionEventDTO): Promise<void> => {
+    const workspaceId = await resolveSessionWorkspaceId(event);
+    if (!workspaceId) {
+      return;
+    }
+
+    const workspaceClients = sseClientsByWorkspace.get(workspaceId);
+    if (!workspaceClients || workspaceClients.size === 0) {
+      return;
+    }
+
+    for (const response of workspaceClients) {
+      if (response.destroyed || response.writableEnded) {
+        removeClient(workspaceId, response);
+        continue;
+      }
+
+      writeSseEvent(response, event.type, event);
+    }
+
+    if (event.type === 'session_deleted') {
+      sessionWorkspaceCache.delete(event.sessionId);
+    }
+  };
+
+  const gatewayServer = createGatewayServer({
     host: options.host ?? DEFAULT_HOST,
     port: options.port ?? DEFAULT_PORT,
     sessionManager,
@@ -285,6 +373,46 @@ export function createTestServer(options: TestServerOptions = {}): GatewayServer
       },
       {
         method: 'GET',
+        path: '/api/workspaces/:workspaceId/events',
+        handler: async ({ req, res, params, error }) => {
+          const auth = requireAuth(req.headers.authorization);
+          if (!auth.authorized) {
+            error(401, 'unauthorized', 'Authorization required');
+            return;
+          }
+
+          const workspaceId = params.workspaceId;
+          if (!workspaceId || !(await workspaceExists(sessionManager, workspaceId))) {
+            error(404, 'workspace_not_found', 'Workspace not found');
+            return;
+          }
+
+          const workspaceSessions = await sessionManager.getSessions(workspaceId);
+          for (const session of workspaceSessions) {
+            sessionWorkspaceCache.set(session.id, workspaceId);
+          }
+
+          res.writeHead(200, {
+            'Content-Type': 'text/event-stream',
+            'Cache-Control': 'no-cache',
+            Connection: 'keep-alive',
+          });
+          res.flushHeaders();
+          res.socket?.setKeepAlive(true);
+          res.socket?.setTimeout(0);
+
+          addClient(workspaceId, res);
+
+          const onClose = (): void => {
+            cleanupResponse(workspaceId, res);
+          };
+
+          req.once('close', onClose);
+          res.once('close', onClose);
+        },
+      },
+      {
+        method: 'GET',
         path: '/api/workspaces/:workspaceId/sessions',
         handler: async ({ req, params, error, json }) => {
           const auth = requireAuth(req.headers.authorization);
@@ -300,6 +428,10 @@ export function createTestServer(options: TestServerOptions = {}): GatewayServer
           }
 
           const sessions = await sessionManager.getSessions(workspaceId);
+          for (const session of sessions) {
+            sessionWorkspaceCache.set(session.id, workspaceId);
+          }
+
           json(200, sessions.map((session) => serializeSession(session)));
         },
       },
@@ -328,6 +460,13 @@ export function createTestServer(options: TestServerOptions = {}): GatewayServer
           }
 
           const createdSession = await sessionManager.createSession(workspaceId, createSessionOptions);
+          sessionWorkspaceCache.set(createdSession.id, workspaceId);
+
+          void fanoutEvent({
+            type: 'session_created',
+            sessionId: createdSession.id,
+          });
+
           json(201, serializeSession(createdSession));
         },
       },
@@ -388,17 +527,49 @@ export function createTestServer(options: TestServerOptions = {}): GatewayServer
             return;
           }
 
+          const existingSession = await getSessionOrNull(sessionManager, sessionId);
+          if (existingSession) {
+            sessionWorkspaceCache.set(existingSession.id, existingSession.workspaceId);
+          }
+
           const deleted = await sessionManager.deleteSession(sessionId);
           if (!deleted) {
             error(404, 'session_not_found', 'Session not found');
             return;
           }
 
+          void fanoutEvent({
+            type: 'session_deleted',
+            sessionId,
+          });
+
           noContent(204);
         },
       },
     ],
   });
+
+  const unsubscribeBroadcast = gatewayServer.onBroadcast((event) => {
+    void fanoutEvent(event);
+  });
+
+  const originalStop = gatewayServer.stop;
+
+  return {
+    ...gatewayServer,
+    stop: async () => {
+      unsubscribeBroadcast();
+      clearInterval(heartbeatTimer);
+
+      for (const [workspaceId, responses] of sseClientsByWorkspace.entries()) {
+        for (const response of responses) {
+          cleanupResponse(workspaceId, response);
+        }
+      }
+
+      await originalStop();
+    },
+  };
 }
 
 if (import.meta.main) {
