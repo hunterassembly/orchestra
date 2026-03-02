@@ -1,6 +1,7 @@
-import type { ServerResponse } from 'node:http';
+import type { IncomingMessage, ServerResponse } from 'node:http';
 import { randomInt, randomUUID } from 'node:crypto';
 import type {
+  AttachmentDTO,
   CreateSessionOptionsDTO,
   MessageDTO,
   PairingConfirmResponse,
@@ -94,6 +95,14 @@ const DEFAULT_REFRESH_TOKEN_TTL_MS = 30 * 24 * 60 * 60_000;
 const VALID_PERMISSION_MODES: PermissionModeDTO[] = ['safe', 'ask', 'allow-all'];
 const MESSAGE_SEND_ACCEPTED_STATUS = 202;
 const LEGACY_TEST_ACCESS_TOKEN = 'test-token';
+const ATTACHMENT_MAX_SIZE_BYTES = 5 * 1024 * 1024;
+const BASE64_PATTERN = /^[A-Za-z0-9+/]*={0,2}$/;
+
+interface ParsedAttachmentUpload {
+  name: string;
+  mimeType: string;
+  data: Buffer;
+}
 
 interface PairingCodeRecord {
   code: string;
@@ -235,7 +244,7 @@ function parseSendMessageOptions(input: unknown): SendMessageOptionsDTO | null {
   return options;
 }
 
-function parseSendMessagePayload(input: unknown): { text: string; options: SendMessageOptionsDTO } | null {
+function parseSendMessagePayload(input: unknown): { text: string; options: SendMessageOptionsDTO; attachmentIds: string[] } | null {
   if (!input || typeof input !== 'object' || Array.isArray(input)) {
     return null;
   }
@@ -261,9 +270,187 @@ function parseSendMessagePayload(input: unknown): { text: string; options: SendM
     return null;
   }
 
+  const attachmentIds = parseAttachmentReferences(candidate.attachments);
+  if (!attachmentIds) {
+    return null;
+  }
+
   return {
     text,
     options,
+    attachmentIds,
+  };
+}
+
+function parseAttachmentReferences(input: unknown): string[] | null {
+  if (input === undefined || input === null) {
+    return [];
+  }
+
+  if (!Array.isArray(input)) {
+    return null;
+  }
+
+  const attachmentIds: string[] = [];
+  for (const attachment of input) {
+    if (typeof attachment === 'string') {
+      if (attachment.trim().length === 0) {
+        return null;
+      }
+
+      attachmentIds.push(attachment);
+      continue;
+    }
+
+    if (!attachment || typeof attachment !== 'object' || Array.isArray(attachment)) {
+      return null;
+    }
+
+    const attachmentRecord = attachment as Record<string, unknown>;
+    if (typeof attachmentRecord.id !== 'string' || attachmentRecord.id.trim().length === 0) {
+      return null;
+    }
+
+    attachmentIds.push(attachmentRecord.id);
+  }
+
+  return attachmentIds;
+}
+
+function buildMessageTextWithAttachmentReferences(
+  text: string,
+  attachmentIds: string[],
+  sessionAttachments: Map<string, AttachmentDTO> | undefined
+): string {
+  if (attachmentIds.length === 0) {
+    return text;
+  }
+
+  const lines: string[] = [];
+  for (const attachmentId of attachmentIds) {
+    const attachment = sessionAttachments?.get(attachmentId);
+    const name = attachment?.name ?? 'attachment';
+    lines.push(`[attachment:${attachmentId}] ${name}`);
+  }
+
+  return `${text}\n\n${lines.join('\n')}`;
+}
+
+function normalizeMimeType(mimeType: string): string {
+  return mimeType
+    .split(';')[0]
+    ?.trim()
+    .toLowerCase() ?? '';
+}
+
+function isSupportedAttachmentMimeType(mimeType: string): boolean {
+  return mimeType.startsWith('image/') || mimeType === 'application/pdf' || mimeType.startsWith('text/');
+}
+
+function getContentTypeHeader(request: IncomingMessage): string {
+  const header = request.headers['content-type'];
+
+  if (Array.isArray(header)) {
+    return header[0] ?? '';
+  }
+
+  return header ?? '';
+}
+
+async function readRequestBodyBuffer(request: IncomingMessage): Promise<Buffer> {
+  const chunks: Buffer[] = [];
+
+  for await (const chunk of request) {
+    chunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : chunk);
+  }
+
+  return Buffer.concat(chunks);
+}
+
+function parseMultipartAttachment(buffer: Buffer, contentTypeHeader: string): ParsedAttachmentUpload | null {
+  const boundaryMatch = /boundary=(?:"([^"]+)"|([^;]+))/i.exec(contentTypeHeader);
+  const boundary = boundaryMatch?.[1] ?? boundaryMatch?.[2];
+  if (!boundary) {
+    return null;
+  }
+
+  const body = buffer.toString('latin1');
+  const parts = body.split(`--${boundary}`);
+
+  for (const part of parts) {
+    const trimmedPart = part.trim();
+    if (trimmedPart.length === 0 || trimmedPart === '--') {
+      continue;
+    }
+
+    const normalizedPart = part.startsWith('\r\n') ? part.slice(2) : part;
+    const separatorIndex = normalizedPart.indexOf('\r\n\r\n');
+    if (separatorIndex < 0) {
+      continue;
+    }
+
+    const headerText = normalizedPart.slice(0, separatorIndex);
+    const bodyText = normalizedPart.slice(separatorIndex + 4).replace(/\r\n$/, '');
+
+    const dispositionLine = headerText
+      .split('\r\n')
+      .find((line) => line.toLowerCase().startsWith('content-disposition:'));
+    if (!dispositionLine) {
+      continue;
+    }
+
+    const filenameMatch = /filename="([^"]*)"/i.exec(dispositionLine);
+    if (!filenameMatch) {
+      continue;
+    }
+
+    const filename = filenameMatch[1] ?? '';
+    const contentTypeLine = headerText
+      .split('\r\n')
+      .find((line) => line.toLowerCase().startsWith('content-type:'));
+
+    const mimeType = contentTypeLine
+      ? contentTypeLine.split(':').slice(1).join(':').trim()
+      : 'application/octet-stream';
+
+    return {
+      name: filename,
+      mimeType,
+      data: Buffer.from(bodyText, 'latin1'),
+    };
+  }
+
+  return null;
+}
+
+function parseBase64AttachmentPayload(payload: unknown): ParsedAttachmentUpload | null {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    return null;
+  }
+
+  const candidate = payload as Record<string, unknown>;
+  const name = typeof candidate.name === 'string' ? candidate.name : null;
+  const mimeType = typeof candidate.mimeType === 'string' ? candidate.mimeType : null;
+  const base64Data = typeof candidate.data === 'string' ? candidate.data : null;
+
+  if (!name || name.trim().length === 0 || !mimeType || mimeType.trim().length === 0 || !base64Data) {
+    return null;
+  }
+
+  const normalizedBase64 = base64Data.replace(/\s+/g, '');
+  if (normalizedBase64.length === 0 || normalizedBase64.length % 4 !== 0 || !BASE64_PATTERN.test(normalizedBase64)) {
+    return null;
+  }
+
+  const data = Buffer.from(normalizedBase64, 'base64');
+  if (data.length === 0) {
+    return null;
+  }
+
+  return {
+    name,
+    mimeType,
+    data,
   };
 }
 
@@ -823,6 +1010,7 @@ export function createTestServer(options: TestServerOptions = {}): GatewayServer
   const sseClientsByDevice = new Map<string, Set<ServerResponse>>();
   const sseClientMetadata = new Map<ServerResponse, { workspaceId: string; deviceId: string }>();
   const sessionWorkspaceCache = new Map<string, string>();
+  const attachmentsBySession = new Map<string, Map<string, AttachmentDTO>>();
   const pairingCodes = new Map<string, PairingCodeRecord>();
   const accessTokens = new Map<string, AccessTokenRecord>([
     [LEGACY_TEST_ACCESS_TOKEN, { deviceId: 'legacy-test-device', expiresAt: Number.MAX_SAFE_INTEGER }],
@@ -1263,6 +1451,70 @@ export function createTestServer(options: TestServerOptions = {}): GatewayServer
       },
       {
         method: 'POST',
+        path: '/api/sessions/:sessionId/attachments',
+        handler: async ({ req, params, parseJsonBody, error, json }) => {
+          const auth = requireAuth(req.headers.authorization, accessTokens);
+          if (!auth.authorized) {
+            error(auth.status, auth.code, auth.message);
+            return;
+          }
+
+          const sessionId = params.sessionId;
+          if (!sessionId) {
+            error(404, 'session_not_found', 'Session not found');
+            return;
+          }
+
+          const session = await getSessionOrNull(sessionManager, sessionId);
+          if (!session) {
+            error(404, 'session_not_found', 'Session not found');
+            return;
+          }
+
+          const contentTypeHeader = getContentTypeHeader(req);
+
+          let parsedUpload: ParsedAttachmentUpload | null = null;
+          if (contentTypeHeader.toLowerCase().startsWith('multipart/form-data')) {
+            const bodyBuffer = await readRequestBodyBuffer(req);
+            parsedUpload = parseMultipartAttachment(bodyBuffer, contentTypeHeader);
+          } else {
+            const payload = await parseJsonBody<unknown>();
+            parsedUpload = parseBase64AttachmentPayload(payload);
+          }
+
+          if (!parsedUpload || parsedUpload.name.trim().length === 0 || parsedUpload.data.length === 0) {
+            error(400, 'invalid_request', 'Attachment file is required');
+            return;
+          }
+
+          const normalizedMimeType = normalizeMimeType(parsedUpload.mimeType);
+          if (!isSupportedAttachmentMimeType(normalizedMimeType)) {
+            error(415, 'unsupported_media_type', 'Attachment MIME type is not supported');
+            return;
+          }
+
+          if (parsedUpload.data.length > ATTACHMENT_MAX_SIZE_BYTES) {
+            error(413, 'payload_too_large', 'Attachment exceeds maximum allowed size');
+            return;
+          }
+
+          const attachment: AttachmentDTO = {
+            id: `att_${randomUUID()}`,
+            name: parsedUpload.name,
+            mimeType: normalizedMimeType,
+            size: parsedUpload.data.length,
+          };
+
+          sessionWorkspaceCache.set(sessionId, session.workspaceId);
+          const sessionAttachments = attachmentsBySession.get(sessionId) ?? new Map<string, AttachmentDTO>();
+          sessionAttachments.set(attachment.id, attachment);
+          attachmentsBySession.set(sessionId, sessionAttachments);
+
+          json(201, attachment);
+        },
+      },
+      {
+        method: 'POST',
         path: '/api/sessions/:sessionId/messages',
         handler: async ({ req, params, parseJsonBody, error, json }) => {
           const auth = requireAuth(req.headers.authorization, accessTokens);
@@ -1291,11 +1543,25 @@ export function createTestServer(options: TestServerOptions = {}): GatewayServer
             return;
           }
 
+          const sessionAttachments = attachmentsBySession.get(sessionId);
+          for (const attachmentId of sendMessagePayload.attachmentIds) {
+            if (!sessionAttachments?.has(attachmentId)) {
+              error(400, 'invalid_request', 'Attachment reference is invalid');
+              return;
+            }
+          }
+
+          const messageText = buildMessageTextWithAttachmentReferences(
+            sendMessagePayload.text,
+            sendMessagePayload.attachmentIds,
+            sessionAttachments
+          );
+
           sessionWorkspaceCache.set(sessionId, session.workspaceId);
 
           const sendResult = await sessionManager.sendMessage(
             sessionId,
-            sendMessagePayload.text,
+            messageText,
             sendMessagePayload.options
           );
 
@@ -1502,6 +1768,8 @@ export function createTestServer(options: TestServerOptions = {}): GatewayServer
             error(404, 'session_not_found', 'Session not found');
             return;
           }
+
+          attachmentsBySession.delete(sessionId);
 
           void fanoutEvent({
             type: 'session_deleted',
