@@ -1,0 +1,28 @@
+{
+  "featureId": "mobile-stores-event-processor",
+  "reviewedAt": "2026-03-02T16:39:34Z",
+  "commitId": "6b33fb9be76aa934c9bd3a25da0c79f2e938a421",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "fail",
+  "codeReview": {
+    "summary": "Mobile auth/session stores and reducer cover the MVP event types and match most expected behaviors, but two reducer gaps diverge from desktop semantics and can misrepresent tool errors or overwrite intermediate assistant messages.",
+    "issues": [
+      {
+        "file": "apps/mobile/src/state/event-processor.ts",
+        "line": 354,
+        "severity": "blocking",
+        "description": "tool_result ignores SessionToolResultEventDTO.isError. The reducer always sets toolStatus to 'completed', so failed tool executions cannot be represented in MessageDTO (which lacks an isError flag). This should map isError to toolStatus: 'error' (and/or an error marker) to preserve failure semantics from desktop." 
+      },
+      {
+        "file": "apps/mobile/src/state/event-processor.ts",
+        "line": 273,
+        "severity": "non_blocking",
+        "description": "text_complete overwrites an existing assistant message for the same turnId even when the message is already a completed intermediate. Desktop semantics avoid overwriting completed intermediate messages, creating a new one instead; this mobile implementation can lose intermediate (thinking) segments." 
+      }
+    ]
+  },
+  "sharedStateObservations": [],
+  "addressesFailureFrom": null,
+  "summary": "Reviewed commit 6b33fb9 for mobile stores/event processor. Core functionality is in place, but tool error handling and intermediate text completion diverge from expected reducer semantics, so the feature needs fixes before approval."
+}

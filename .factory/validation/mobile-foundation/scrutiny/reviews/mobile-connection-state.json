@@ -1,0 +1,21 @@
+{
+  "featureId": "mobile-connection-state",
+  "reviewedAt": "2026-03-02T16:38:52Z",
+  "commitId": "e9d20c9",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "Connection state machine implementation and tests align with the required transitions, backoff schedule, auth failure handling, token refresh fallback, and background/foreground behavior.",
+    "issues": []
+  },
+  "sharedStateObservations": [
+    {
+      "area": "skills",
+      "observation": "The mobile-worker skill mandates tests in __tests__ directories, but Jest is configured to run any src/**/*.test.ts(x) and the new connection tests are colocated in src/state/connection.test.ts. The skill guidance may be overly strict or outdated.",
+      "evidence": ".factory/skills/mobile-worker/SKILL.md (tests go in __tests__), apps/mobile/jest.config.js testMatch, apps/mobile/src/state/connection.test.ts"
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "Reviewed the mobile connection state machine changes; no blocking issues found and tests cover the expected behaviors."
+}

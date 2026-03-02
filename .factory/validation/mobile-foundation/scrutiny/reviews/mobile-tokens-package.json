@@ -1,0 +1,34 @@
+{
+  "featureId": "mobile-tokens-package",
+  "reviewedAt": "2026-03-02T16:38:20Z",
+  "commitId": "a8111447a32f9693f17a7c51dde353f5c4b494ec",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "The mobile tokens package exports the required light/dark semantic and surface colors, typography/spacing/radius scales, and parity tests against DEFAULT_THEME and UI CSS. The implementation is straightforward and tests cover completeness and fallback behavior.",
+    "issues": [
+      {
+        "file": "packages/mobile-tokens/src/index.ts",
+        "line": 1,
+        "severity": "non_blocking",
+        "description": "DEFAULT_THEME is imported via a relative path into another package. This bypasses workspace dependency conventions and makes the package less portable; prefer importing from @craft-agent/shared/config with a declared workspace dependency."
+      },
+      {
+        "file": "packages/mobile-tokens/package.json",
+        "line": 16,
+        "severity": "non_blocking",
+        "description": "The package does not declare a dependency on @craft-agent/shared even though it imports DEFAULT_THEME from that package. Add a workspace dependency to align with monorepo conventions and avoid hidden coupling."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "skills",
+      "observation": "The mobile-worker skill mandates tests live under __tests__, but existing mobile packages (e.g., mobile-contracts) place Bun tests alongside source files (src/index.test.ts). The guidance appears out-of-date for tokens packages.",
+      "evidence": ".factory/skills/mobile-worker/SKILL.md (Tests go in __tests__/), packages/mobile-contracts/src/index.test.ts"
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "Reviewed the mobile-tokens package commit and verified required tokens and parity tests are present. No blocking issues found; noted non-blocking dependency/import convention concerns and a skill guidance mismatch about test locations."
+}

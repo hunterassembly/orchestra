@@ -1,0 +1,21 @@
+{
+  "featureId": "mobile-api-client",
+  "reviewedAt": "2026-03-02T16:38:04Z",
+  "commitId": "0eedccb",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "The API client implements all required endpoints, auth header injection, and refresh-on-401 retry behavior, with comprehensive mocked-fetch tests validating requests and error handling. No functional defects found.",
+    "issues": []
+  },
+  "sharedStateObservations": [
+    {
+      "area": "conventions",
+      "observation": "Mobile Jest tests should live under src/__tests__ (or src/test-utils) to avoid inclusion in apps/mobile tsconfig; this placement rule is not called out in AGENTS.md or library notes.",
+      "evidence": "apps/mobile/tsconfig.json excludes src/__tests__/ and src/test-utils; transcript shows the worker moved a test from src/api/client.test.ts to src/__tests__/api/client.test.ts after tsc failures."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "Pass: client and tests align with gateway endpoints and auth refresh flow; no code issues identified."
+}
