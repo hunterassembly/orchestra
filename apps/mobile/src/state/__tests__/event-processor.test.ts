@@ -127,6 +127,37 @@ describe("event processor", () => {
     expect(message?.toolResult).toBe("ok");
   });
 
+  it("marks tool_result as error when isError is true", () => {
+    const withToolStart = processSessionEvent(createSnapshot(), {
+      type: "tool_start",
+      sessionId: "session-1",
+      toolUseId: "tool-1",
+      toolName: "Read",
+      toolInput: { file: "a.ts" },
+    });
+
+    const updatedTool = processSessionEvent(withToolStart, {
+      type: "tool_result",
+      sessionId: "session-1",
+      toolUseId: "tool-1",
+      toolName: "Read",
+      result: "failed",
+      isError: true,
+    });
+
+    const pushedTool = processSessionEvent(createSnapshot(), {
+      type: "tool_result",
+      sessionId: "session-1",
+      toolUseId: "tool-2",
+      toolName: "Write",
+      result: "failed",
+      isError: true,
+    });
+
+    expect(updatedTool.sessionsById["session-1"]?.messages[0]?.toolStatus).toBe("error");
+    expect(pushedTool.sessionsById["session-1"]?.messages[0]?.toolStatus).toBe("error");
+  });
+
   it("appends status/info/error/typed_error timeline messages", () => {
     const typedError = {
       code: "boom",

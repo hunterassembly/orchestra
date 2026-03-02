@@ -13,6 +13,9 @@
     "test": "bun test",
     "tsc": "tsc"
   },
+  "dependencies": {
+    "@craft-agent/shared": "workspace:*"
+  },
   "devDependencies": {
     "@types/bun": "latest",
     "typescript": "^5.0.0"
