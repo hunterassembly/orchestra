@@ -23,6 +23,8 @@
     "paths": {
       "@/*": ["src/renderer/*"],
       "@config/*": ["../../packages/shared/src/config/*"],
+      "@craft-agent/codex-types": ["../../packages/codex-types/src/index.ts"],
+      "@craft-agent/codex-types/*": ["../../packages/codex-types/src/*"],
       "@craft-agent/shared": ["../../packages/shared/src/index.ts"],
       "@craft-agent/shared/*": ["../../packages/shared/src/*"]
     }

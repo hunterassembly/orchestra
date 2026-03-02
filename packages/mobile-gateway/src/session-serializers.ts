@@ -695,6 +695,22 @@ export function serializeSessionEvent(event: GatewaySessionEventLike): SessionEv
       };
     }
 
+    case 'permission_mode_changed': {
+      if (
+        event.permissionMode !== 'safe'
+        && event.permissionMode !== 'ask'
+        && event.permissionMode !== 'allow-all'
+      ) {
+        return null;
+      }
+
+      return {
+        type: 'permission_mode_changed',
+        sessionId,
+        permissionMode: event.permissionMode,
+      };
+    }
+
     case 'user_message': {
       const messageCandidate = event.message;
       if (!messageCandidate || typeof messageCandidate !== 'object') {

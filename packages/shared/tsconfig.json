@@ -25,6 +25,8 @@
     "paths": {
       "@craft-agent/core": ["../core/src/index.ts"],
       "@craft-agent/core/*": ["../core/src/*"],
+      "@craft-agent/codex-types": ["../codex-types/src/index.ts"],
+      "@craft-agent/codex-types/*": ["../codex-types/src/*"],
       "@craft-agent/shared": ["./src/index.ts"],
       "@craft-agent/shared/*": ["./src/*"]
     }

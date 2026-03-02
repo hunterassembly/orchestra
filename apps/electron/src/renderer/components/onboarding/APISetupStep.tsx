@@ -5,11 +5,12 @@ import { StepFormLayout, BackButton, ContinueButton } from "./primitives"
 import type { LlmAuthType, LlmProviderType } from "@craft-agent/shared/config/llm-connections"
 
 /** Provider segment for the segmented control */
-export type ProviderSegment = 'anthropic' | 'pi'
+export type ProviderSegment = 'anthropic' | 'codex' | 'pi'
 
 const SEGMENT_LABELS: Record<ProviderSegment, string> = {
   anthropic: 'Claude',
-  pi: 'Craft Agents Backend',
+  codex: 'Codex CLI',
+  pi: 'Other Providers',
 }
 
 const BetaBadge = () => (
@@ -20,7 +21,8 @@ const BetaBadge = () => (
 
 const SEGMENT_DESCRIPTIONS: Record<ProviderSegment, React.ReactNode> = {
   anthropic: <>Use Claude Agent SDK as the main agent.<br />Configure with your Claude subscription or API key.</>,
-  pi: <>Use Craft Agents Backend as the main agent.<BetaBadge /><br />Configure with your API key, OAuth subscription, or custom endpoint.</>,
+  codex: <>Use OpenAI Codex runtime as the main agent.<br />Sign in with ChatGPT Plus or Pro.</>,
+  pi: <>Use Craft Agents Backend as the main agent.<BetaBadge /><br />Configure with your API key or provider OAuth.</>,
 }
 
 /**
@@ -29,7 +31,7 @@ const SEGMENT_DESCRIPTIONS: Record<ProviderSegment, React.ReactNode> = {
  *
  * - 'claude_oauth' → anthropic + oauth
  * - 'anthropic_api_key' → anthropic + api_key
- * - 'pi_chatgpt_oauth' → pi + oauth
+ * - 'pi_chatgpt_oauth' → codex + oauth
  * - 'pi_copilot_oauth' → pi + oauth
  * - 'pi_api_key' → pi + api_key
  */
@@ -53,7 +55,7 @@ export function apiSetupMethodToConnectionTypes(method: ApiSetupMethod): {
     case 'anthropic_api_key':
       return { providerType: 'anthropic', authType: 'api_key' };
     case 'pi_chatgpt_oauth':
-      return { providerType: 'pi', authType: 'oauth' };
+      return { providerType: 'codex', authType: 'oauth' };
     case 'pi_copilot_oauth':
       return { providerType: 'pi', authType: 'oauth' };
     case 'pi_api_key':
@@ -87,9 +89,9 @@ const API_SETUP_OPTIONS: ApiSetupOption[] = [
   {
     id: 'pi_chatgpt_oauth',
     name: 'ChatGPT Plus',
-    description: 'Use your ChatGPT subscription with Craft Agents Backend.',
+    description: 'Use your ChatGPT subscription with the Codex runtime.',
     icon: <Cpu className="size-4" />,
-    providerType: 'pi',
+    providerType: 'codex',
   },
   {
     id: 'pi_copilot_oauth',
@@ -185,11 +187,11 @@ function ProviderSegmentedControl({
   activeSegment: ProviderSegment
   onSegmentChange: (segment: ProviderSegment) => void
 }) {
-  const segments: ProviderSegment[] = ['anthropic', 'pi']
+  const orderedSegments: ProviderSegment[] = ['anthropic', 'codex', 'pi']
 
   return (
     <div className="flex rounded-xl bg-foreground/[0.03] p-1 mb-4">
-      {segments.map((segment) => (
+      {orderedSegments.map((segment) => (
         <button
           key={segment}
           onClick={() => onSegmentChange(segment)}

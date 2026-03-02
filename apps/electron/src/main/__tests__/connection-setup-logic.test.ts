@@ -122,6 +122,7 @@ describe('createBuiltInConnection', () => {
 
   it('sets piAuthProvider for chatgpt-plus', () => {
     const conn = createBuiltInConnection('chatgpt-plus')
+    expect(conn.providerType).toBe('codex')
     expect(conn.piAuthProvider).toBe('openai-codex')
   })
 

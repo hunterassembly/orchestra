@@ -90,7 +90,7 @@ export function CredentialsStep({
     return (
       <StepFormLayout
         title="Connect ChatGPT"
-        description="Use your ChatGPT subscription to power Craft Agents."
+        description="Use your ChatGPT subscription to power the Codex runtime."
         actions={
           <>
             <BackButton onClick={onBack} disabled={status === 'validating'} />
@@ -117,7 +117,7 @@ export function CredentialsStep({
           )}
           {status === 'success' && (
             <div className="rounded-lg bg-success/10 text-success text-sm p-3">
-              Connected! Your ChatGPT subscription is ready.
+              Connected! Your Codex runtime session is ready.
             </div>
           )}
         </div>

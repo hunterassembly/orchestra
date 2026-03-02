@@ -20,6 +20,24 @@ Why:
 
 Pick up iPhone and continue the exact same conversation/workflow you started on desktop, with no meaningful capability downgrade for core chat workflows.
 
+## Implementation Status Snapshot (As of 2026-03-02)
+
+| Phase | Status | Current Evidence | Remaining Gap |
+| --- | --- | --- | --- |
+| 1. Contract + Gateway Foundation | Implemented (Core) | Dedicated runtime gateway server exists in `packages/mobile-gateway/src/runtime-server.ts`; Electron startup/shutdown + SSE event bridge are wired via `apps/electron/src/main/mobile-gateway.ts` and `apps/electron/src/main/index.ts`. | Add integration coverage for gateway lifecycle failures and document local-network deployment defaults for end users. |
+| 2. Messaging + Streaming Core | Implemented (MVP Core) | Message, interrupt, kill, command, and SSE behavior are implemented/tested in `packages/mobile-gateway`; mobile chat route now renders streamed timeline + composer controls in `apps/mobile/src/app/(main)/session/[sessionId].tsx`. | Expand renderer fidelity for desktop-level markdown/code/tool presentation polish. |
+| 3. Pairing + Security + Network | Implemented (MVP) | End-to-end onboarding pairing flow exists in `apps/mobile/src/app/(onboarding)/{welcome,find-runtime,confirm-pair,pair-success}.tsx`; pair start/confirm/refresh/revoke and secure token storage are wired. | Add host auto-discovery, richer re-pair recovery, and network diagnostics UX. |
+| 4. Mobile Shell + Navigation | Implemented (MVP Core) | Expo app scaffold + onboarding + sessions home + chat route are in place (`apps/mobile/src/app/(onboarding)/*`, `apps/mobile/src/app/(main)/index.tsx`, `apps/mobile/src/app/(main)/session/[sessionId].tsx`). | Add settings and diagnostics routes to complete the shell. |
+| 5. Design System + Theme Parity | Partial | `packages/mobile-tokens` exists; core UI primitives and theme provider exist in `apps/mobile/src/components/ui` and `apps/mobile/src/theme`. | Workspace override themes and full screen-level parity are not applied yet. |
+| 6. Attachments + Interaction Completeness | Partial | Attachment API client, command API, and reducer support for permission/credential events exist. | Attachment picker/progress UI, permission cards, and tool timeline UI are not implemented yet. |
+| 7. QA + Performance + Release | Partial | Strong package-level tests exist (gateway, reducer, client, SSE, auth store, tokens). | No mobile E2E flow coverage and no TestFlight rollout pipeline yet. |
+
+### What This Means Right Now
+
+- Gateway runtime wiring and phone pairing are now implemented end-to-end.
+- The critical path is now Step 5 and Step 6: attachments/interactions and settings/diagnostics.
+- Design-system parity must stay strict by continuing to use existing mobile primitives and theme tokens.
+
 ## Scope
 
 ### In Scope (MVP)
@@ -582,3 +600,108 @@ User narrative:
 2. Implement Electron mobile gateway skeleton + health/pair/session list endpoints.
 3. Scaffold `apps/mobile` with Expo + route shell + SSE client.
 4. Create `packages/mobile-tokens` from existing theme sources.
+
+## Finish Plan (Execution Order)
+
+### Step 1: Wire Mobile Gateway Into Electron Runtime
+
+Status: Completed on 2026-03-02.
+
+Work:
+
+1. Added gateway bootstrap/lifecycle in Electron main process startup/shutdown.
+2. Bridged SessionManager events into gateway SSE broadcaster.
+3. Added config for bind host/port and local-network safety defaults.
+4. Added health diagnostics in Electron logs to confirm gateway availability.
+
+User narrative:
+
+- Users can actually pair a phone to the running Mac app and trust that live session state is real.
+
+### Step 2: Implement Real Onboarding and Pairing Screens
+
+Status: Completed on 2026-03-02.
+
+Work:
+
+1. Replaced onboarding placeholder route with `welcome`, `find-runtime`, `confirm-pair`, `pair-success`.
+2. Connected pair flow to `/api/pair/start`, `/api/pair/confirm`, and refresh logic.
+3. Added pairing error states (invalid code, expired code, unreachable host).
+4. Persisted host and device context for reconnect/resume.
+5. Kept onboarding implementation on existing mobile design primitives (`Button`, `TextInput`) and theme tokens.
+
+User narrative:
+
+- Users can get from install to active session on phone in a few taps without setup confusion.
+
+### Step 3: Build Sessions Home End-to-End
+
+Status: Completed on 2026-03-02.
+
+Work:
+
+1. Implemented sessions list screen using existing stores/API methods.
+2. Added pull-to-refresh, unread indicators, status badges, and relative timestamps.
+3. Added swipe + long-press actions (`markRead`, `markUnread`, `rename`, `status`, `permission mode`, `delete`) with command wiring to existing gateway endpoints.
+4. Added empty/offline/loading states from UX spec.
+5. Added a minimal session route target so session taps are functional while Step 4 chat UI is built.
+6. Kept implementation on existing mobile primitives/tokens (`Button`, `Badge`, `ConnectionChip`, theme provider).
+
+User narrative:
+
+- Users can quickly triage and reopen the right conversation instead of hunting through desktop first.
+
+### Step 4: Build Chat Screen With Streaming and Controls
+
+Status: Completed on 2026-03-02.
+
+Work:
+
+1. Implemented chat route per session and load of message history.
+2. Rendered streaming assistant output and tool/status/error events from reducer state.
+3. Implemented composer send + interrupt toggle and reconnect-safe pending-send replay queue.
+4. Added jump-to-live behavior and bottom-lock rules during streaming.
+5. Added session header action menu (rename/status/permission mode/delete) using existing command endpoints.
+
+User narrative:
+
+- Users can confidently continue active agent work from iPhone, including stopping runs when needed.
+
+### Step 5: Complete Attachments and Interactive Requests
+
+Work:
+
+1. Add camera/photo/files picker integration.
+2. Implement upload staging/progress/retry/cancel UI tied to attachment endpoint.
+3. Render permission and credential request cards with approve/deny/submit actions.
+4. Ensure pending approvals survive app background/foreground transitions.
+
+User narrative:
+
+- Users can unblock agent tasks from mobile instantly instead of waiting to return to desktop.
+
+### Step 6: Ship Settings, Diagnostics, and Re-Pair UX
+
+Work:
+
+1. Add runtime settings screen with host info, sync timestamp, and unpair flow.
+2. Add appearance selector (system/light/dark) tied to theme provider.
+3. Add diagnostics bundle copy (versions, SSE state, last error).
+4. Add full-screen re-pair recovery when token is invalid/expired.
+
+User narrative:
+
+- Users can self-recover connectivity and auth issues without losing trust in the app.
+
+### Step 7: Stabilize With E2E + Beta Rollout
+
+Work:
+
+1. Add happy-path and failure-path iOS E2E (pair -> sessions -> chat stream -> interrupt -> resume).
+2. Add regression tests for reconnect, pending-send replay, and permission card flows.
+3. Add TestFlight distribution checklist and telemetry dashboard for reconnect/error rates.
+4. Run staged beta with known power users and close top blockers before broad rollout.
+
+User narrative:
+
+- Users get a dependable daily driver experience rather than a demo that fails under real network conditions.

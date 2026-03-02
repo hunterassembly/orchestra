@@ -8,6 +8,7 @@ export const AUTH_STORAGE_KEYS = {
   refreshToken: "orchestra.auth.refreshToken",
   expiresAt: "orchestra.auth.expiresAt",
   deviceId: "orchestra.auth.deviceId",
+  runtimeHost: "orchestra.auth.runtimeHost",
   legacyToken: "orchestra.auth.token",
 } as const;
 
@@ -31,6 +32,7 @@ export type AuthStoreState = {
   refreshToken: string | null;
   tokenExpiresAt: number | null;
   deviceId: string | null;
+  runtimeHost: string | null;
   isHydrated: boolean;
   isRefreshing: boolean;
   requiresRePair: boolean;
@@ -42,6 +44,7 @@ export type AuthStoreState = {
   clearCredentials: () => Promise<void>;
   setPairingState: (next: Partial<PairingState>) => void;
   clearPairingState: () => void;
+  setRuntimeHost: (host: string | null) => Promise<void>;
   isAccessTokenExpired: (now?: number) => boolean;
   getAccessToken: () => string | null;
   getRefreshToken: () => string | null;
@@ -83,17 +86,19 @@ export function createAuthStore() {
     refreshToken: null,
     tokenExpiresAt: null,
     deviceId: null,
+    runtimeHost: null,
     isHydrated: false,
     isRefreshing: false,
     requiresRePair: false,
     pairing: INITIAL_PAIRING_STATE,
 
     hydrate: async () => {
-      const [accessToken, refreshToken, expiresAt, deviceId, legacyToken] = await Promise.all([
+      const [accessToken, refreshToken, expiresAt, deviceId, runtimeHost, legacyToken] = await Promise.all([
         SecureStore.getItemAsync(AUTH_STORAGE_KEYS.accessToken),
         SecureStore.getItemAsync(AUTH_STORAGE_KEYS.refreshToken),
         SecureStore.getItemAsync(AUTH_STORAGE_KEYS.expiresAt),
         SecureStore.getItemAsync(AUTH_STORAGE_KEYS.deviceId),
+        SecureStore.getItemAsync(AUTH_STORAGE_KEYS.runtimeHost),
         SecureStore.getItemAsync(AUTH_STORAGE_KEYS.legacyToken),
       ]);
 
@@ -102,6 +107,7 @@ export function createAuthStore() {
         refreshToken,
         tokenExpiresAt: parseExpiresAt(expiresAt),
         deviceId,
+        runtimeHost,
         isHydrated: true,
       });
     },
@@ -175,6 +181,11 @@ export function createAuthStore() {
 
     clearPairingState: () => {
       set({ pairing: INITIAL_PAIRING_STATE });
+    },
+
+    setRuntimeHost: async (host) => {
+      set({ runtimeHost: host });
+      await persistString(AUTH_STORAGE_KEYS.runtimeHost, host);
     },
 
     isAccessTokenExpired: (now = Date.now()) => {

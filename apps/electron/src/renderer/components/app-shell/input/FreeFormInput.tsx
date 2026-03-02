@@ -314,6 +314,7 @@ export function FreeFormInput({
   const connectionsByProvider = React.useMemo(() => {
     const groups: Record<string, typeof llmConnections> = {
       'Anthropic': [],
+      'Codex CLI': [],
       'Craft Agents Backend': [],
     }
     for (const conn of llmConnections) {
@@ -321,6 +322,8 @@ export function FreeFormInput({
       // Group by SDK: anthropic/anthropic_compat/bedrock/vertex use Anthropic SDK
       if (provider === 'anthropic' || provider === 'anthropic_compat' || provider === 'bedrock' || provider === 'vertex') {
         groups['Anthropic'].push(conn)
+      } else if (provider === 'codex') {
+        groups['Codex CLI'].push(conn)
       } else if (provider === 'pi' || provider === 'pi_compat') {
         groups['Craft Agents Backend'].push(conn)
       }

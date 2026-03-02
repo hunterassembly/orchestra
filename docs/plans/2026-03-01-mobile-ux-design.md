@@ -15,6 +15,26 @@ This document defines the detailed UX and interaction design for the Orchestra i
 - **New session**: Quick-start with defaults, configure after via overflow menu.
 - **Navigation**: Two-screen focus (Sessions List + Chat). No tabs, drawers, or bottom nav.
 
+## UX Implementation Status Snapshot (As of 2026-03-02)
+
+| UX Area | Status | Current Evidence | Remaining UX Work |
+| --- | --- | --- | --- |
+| App routing shell | Partial | Auth-gated routing + real onboarding and sessions-home routes exist in `apps/mobile/src/app/_layout.tsx` and `apps/mobile/src/app/(onboarding)/*` + `apps/mobile/src/app/(main)/index.tsx`. | Replace remaining placeholder chat/settings routes with production screens. |
+| Onboarding + pairing UX | Implemented (MVP) | Full 4-screen pairing funnel exists (`welcome`, `find-runtime`, `confirm-pair`, `pair-success`) with host entry, code confirm, expiry/error handling, and success handoff. | Add host auto-discovery, richer edge-case motion/feedback, and re-pair diagnostics UX. |
+| Sessions Home UX | Implemented (MVP) | Sessions list is implemented with workspace switching, pull-to-refresh, swipe + long-press actions, unread/status indicators, and loading/offline/empty states in `apps/mobile/src/app/(main)/index.tsx`. | Replace current minimal session destination with full chat timeline + composer behavior (Step 4). |
+| Chat timeline UX | Implemented (MVP Core) | Chat route now renders timeline + streaming + tool cards + fixed composer + interrupt + jump-to-live behavior in `apps/mobile/src/app/(main)/session/[sessionId].tsx`. | Add desktop-level markdown/code rendering fidelity and richer animation polish. |
+| Connection-state UX | Partial | `apps/mobile/src/state/connection.ts` has reconnect/offline state machine semantics. | Surface those states in global banner/chip/details sheet exactly as spec'd. |
+| Theme UX | Partial | Theme provider + token plumbing exists in `apps/mobile/src/theme/*`. | Apply theme systematically across screen surfaces and controls. |
+| Permissions/Credentials UX | Not started | Event/state support exists, but no inline cards. | Add approval/input cards with persistent pending-state handling. |
+| Attachments UX | Not started | API method exists, but no picker/staging/upload UI. | Implement picker, progress rows, retry/cancel, and timeline previews/chips. |
+| Settings + diagnostics UX | Not started | No settings route implementation yet. | Implement runtime, appearance, and diagnostics sections from this spec. |
+
+### UX Readout
+
+- The UX architecture is clear and documented.
+- Most user-facing iOS work is still ahead; current code is mostly platform/foundation plumbing.
+- Converting the placeholders into the two core screens (Sessions + Chat) will unlock real user value fastest.
+
 ## Screen 1: Sessions Home
 
 ```
@@ -483,3 +503,83 @@ Orchestra-native, not iOS spring defaults:
 - App foregrounded: immediate reconnect + catch-up from last event cursor.
 - Pending permission requests survive background/foreground cycle.
 - No data loss — last-known state cached locally.
+
+## UX Finish Plan (Now -> iOS MVP)
+
+### Step 1: Implement the Onboarding Funnel Exactly as Designed
+
+Implementation:
+
+1. Add `welcome`, `find-runtime`, `confirm-pair`, and `pair-success` routes.
+2. Implement pairing host discovery/manual entry and 6-digit code UX.
+3. Implement invalid-code, expired-code, and network-failure states.
+4. Add success transition into sessions home.
+
+User narrative:
+
+- Users understand what the app is, connect quickly, and avoid dead ends during first use.
+
+### Step 2: Implement Sessions Home as the Daily Command Center
+
+Implementation:
+
+1. Build header with title, status chip, settings, and new-session action.
+2. Render session cells with unread indicator, status badge, and last activity time.
+3. Add swipe and long-press actions per spec.
+4. Add empty/offline/loading states with clear CTA copy.
+
+User narrative:
+
+- Users can rapidly find and resume the right conversation, even on weak connections.
+
+### Step 3: Implement Chat for Real-Time Continuation Work
+
+Implementation:
+
+1. Build chat route with session header and overflow actions.
+2. Implement message timeline (user/assistant/tool/status/error rows).
+3. Wire streaming behavior (`text_delta`/`text_complete`) and auto-follow rules.
+4. Implement send/interrupt composer behavior with pending-send indicators.
+
+User narrative:
+
+- Users can keep active tasks moving from phone with the same confidence they have on desktop.
+
+### Step 4: Add Permission/Credential/Attachment UX to Remove Mobile Blockers
+
+Implementation:
+
+1. Add inline permission and credential cards with contextual actions.
+2. Add attachment source picker and staging/progress/retry UI.
+3. Show uploaded assets in timeline with image preview/file chips.
+4. Ensure pending requests and uploads survive app lifecycle transitions.
+
+User narrative:
+
+- Users can unblock sensitive or file-dependent tasks immediately without returning to their Mac.
+
+### Step 5: Implement Settings + Diagnostics + Recovery UX
+
+Implementation:
+
+1. Build settings screen with connected runtime and unpair flow.
+2. Add appearance controls and immediate visual update.
+3. Add diagnostics summary and copy bundle action.
+4. Implement token-expiry and unreachable-runtime recovery routes.
+
+User narrative:
+
+- Users can self-fix common failures and stay productive instead of getting stuck on connection/auth problems.
+
+### Step 6: Validate UX in Real iPhone Conditions Before Broader Rollout
+
+Implementation:
+
+1. Run end-to-end tests covering pairing, stream, interrupt, reconnect, and resume.
+2. Validate accessibility (Dynamic Type, VoiceOver labels, minimum hit targets).
+3. Validate network transitions (Wi-Fi to cellular, foreground/background).
+4. Gate release on critical UX acceptance criteria from this document.
+
+User narrative:
+
+- Users get a mobile app that behaves predictably in real-world usage, not only under ideal lab conditions.

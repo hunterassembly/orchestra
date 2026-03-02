@@ -1211,17 +1211,18 @@ export type {
 } from './llm-connections.ts';
 
 /**
- * Migrate Codex (OpenAI) and Copilot connections to Pi backend.
- * Runs on startup — transparently routes existing users through PiAgent.
+ * Migrate legacy OpenAI/Copilot provider types to current runtime providers.
+ * Runs on startup — transparently routes existing users through current backends.
  *
  * No re-auth needed: credentials are keyed by connection slug (not provider),
  * and PiAgent reads the same OAuth tokens via piAuthProvider.
  *
  * Migration rules:
- * - openai + oauth       → pi + openai-codex
+ * - openai + oauth       → codex + openai-codex
  * - openai + api_key     → pi + openai
  * - openai_compat        → pi + openai  (keep baseUrl)
  * - copilot              → pi + github-copilot
+ * - pi + openai-codex + oauth → codex + openai-codex
  * - defaultModel reset to Pi's default (stale Codex/Copilot model IDs dropped)
  * - codexPath removed (no longer needed)
  */
@@ -1236,9 +1237,9 @@ function migrateCodexCopilotToPi(config: StoredConfig): boolean {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const connAny = connection as any;
     if (providerStr === 'openai' && connection.authType === 'oauth') {
-      connection.providerType = 'pi';
+      connection.providerType = 'codex';
       connection.piAuthProvider = 'openai-codex';
-      connection.name = 'ChatGPT Plus (via Pi)';
+      connection.name = 'ChatGPT Plus';
       delete connAny.codexPath;
       connection.defaultModel = undefined; // reset — backfill picks Pi default
       connection.models = undefined;
@@ -1264,6 +1265,12 @@ function migrateCodexCopilotToPi(config: StoredConfig): boolean {
       connection.piAuthProvider = 'github-copilot';
       connection.name = 'GitHub Copilot (via Pi)';
       delete connAny.codexPath;
+      connection.defaultModel = undefined;
+      connection.models = undefined;
+      changed = true;
+    } else if (providerStr === 'pi' && connection.piAuthProvider === 'openai-codex' && connection.authType === 'oauth') {
+      connection.providerType = 'codex';
+      connection.name = 'ChatGPT Plus';
       connection.defaultModel = undefined;
       connection.models = undefined;
       changed = true;
@@ -1293,7 +1300,11 @@ function backfillAllConnectionModels(config: StoredConfig): boolean {
     // Migrate pi-codex connections from 'openai' to 'openai-codex' provider.
     // 'openai-codex' uses the ChatGPT Plus backend (chatgpt.com/backend-api),
     // while 'openai' is for regular API key auth (api.openai.com).
-    if (isPiProvider(connection.providerType) && connection.piAuthProvider === 'openai') {
+    if (
+      isPiProvider(connection.providerType) &&
+      connection.piAuthProvider === 'openai' &&
+      connection.authType === 'oauth'
+    ) {
       connection.piAuthProvider = 'openai-codex';
       changed = true;
     }
@@ -1607,14 +1618,14 @@ export function migrateLegacyLlmConnectionsConfig(): void {
         createdAt: Date.now(),
       };
     } else if (legacyAuthType === 'codex_oauth') {
-      // ChatGPT Plus OAuth → Pi backend
+      // ChatGPT Plus OAuth → Codex runtime backend
       migrated = {
         slug: 'codex',
-        name: 'ChatGPT Plus (via Pi)',
-        providerType: 'pi',
+        name: 'ChatGPT Plus',
+        providerType: 'codex',
         authType: 'oauth',
         piAuthProvider: 'openai-codex',
-        models: getDefaultModelsForConnection('pi', 'openai-codex'),
+        models: getDefaultModelsForConnection('codex', 'openai-codex'),
         createdAt: Date.now(),
       };
     } else if (legacyAuthType === 'codex_api_key') {

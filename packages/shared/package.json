@@ -51,12 +51,14 @@
     "./interceptor": "./src/interceptor-common.ts",
     "./search": "./src/search/index.ts",
     "./tools": "./src/tools/index.ts",
+    "./codex": "./src/codex/index.ts",
     "./mentions": "./src/mentions/index.ts",
     "./skills/types": "./src/skills/types.ts",
     "./automations": "./src/automations/index.ts",
     "./automations/resolve-config-path": "./src/automations/resolve-config-path.ts"
   },
   "dependencies": {
+    "@craft-agent/codex-types": "workspace:*",
     "@craft-agent/core": "workspace:*",
     "@craft-agent/session-tools-core": "workspace:*",
     "@isaacs/ttlcache": "^2.1.4",

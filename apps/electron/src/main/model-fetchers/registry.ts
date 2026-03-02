@@ -23,6 +23,7 @@ const bedrockVertexFetcher = new BedrockVertexModelFetcher()
  */
 export const MODEL_FETCHERS: ModelFetcherMap = {
   anthropic: anthropicFetcher,
+  codex:     piFetcher,
   pi:        piFetcher,
   bedrock:   bedrockVertexFetcher,
   vertex:    bedrockVertexFetcher,

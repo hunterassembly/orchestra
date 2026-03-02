@@ -9,6 +9,12 @@ export {
   type GatewayServerStartResult,
   type GatewaySessionManager,
 } from './gateway-server.ts';
+export {
+  createRuntimeGatewayServer,
+  type RuntimeGatewayServerOptions,
+  type RuntimeSendMessageResult,
+  type RuntimeSessionManager,
+} from './runtime-server.ts';
 
 export { parseJsonBody, parseQuery, readRequestBody, RequestParsingError } from './request-parsing.ts';
 export { createRouter, type HttpMethod, type RouteDefinition, type RouterMatchResult } from './router.ts';

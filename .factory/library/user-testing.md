@@ -114,3 +114,46 @@ DEVICE_ID=$(echo "$CONFIRM" | python3 -c "import json,sys; print(json.load(sys.s
 
 ### Writing flow reports
 Write JSON report to: `.factory/validation/gateway-messaging-auth/user-testing/flows/<group-id>.json`
+
+## Flow Validator Guidance: Mobile Foundation (Jest + bun test + TypeScript)
+
+The mobile-foundation milestone assertions verify mobile app infrastructure: stores, event processor, API client, SSE client, connection state machine, theme provider, tokens, and app routing. All assertions are tested via automated test suites and TypeScript compilation — there is no simulator or browser testing.
+
+### Testing Commands
+- **Mobile tokens**: `cd packages/mobile-tokens && bun test` and `cd packages/mobile-tokens && bun run tsc --noEmit`
+- **Mobile app Jest**: `cd apps/mobile && npx jest --verbose`
+- **Mobile app TypeScript**: `cd apps/mobile && npx tsc --noEmit`
+
+### Evidence Types for Mobile Foundation Assertions
+- `test-output`: Verified by passing Jest/bun test with matching test description
+- `typecheck`: Verified by TypeScript compiling without errors
+- `store-state`: Verified by store unit tests (sessions, auth, connection)
+- `component-render`: Verified by component rendering tests (@testing-library/react-native)
+
+### Assertion-to-Test Mapping
+Each assertion should be verified by running the relevant test suite, reading the specific test output, and confirming the test exercises the behavior described in the assertion. If tests are missing for a specific behavior, the assertion should be marked "fail" with details.
+
+### Isolation Rules
+- Subagents are read-only — they run tests and inspect output but do NOT modify source files
+- Each subagent runs independent test commands — there's no shared state between test runs
+- bun test and Jest test suites are completely independent
+
+### Writing flow reports
+Write JSON report to: `.factory/validation/mobile-foundation/user-testing/flows/<group-id>.json`
+
+Report format:
+```json
+{
+  "groupId": "<group-id>",
+  "assertions": {
+    "VAL-XX-YYY": {
+      "status": "pass" | "fail" | "blocked",
+      "evidence": "Description of which test(s) verify this behavior",
+      "details": "Specific test output or TypeScript output confirming the assertion"
+    }
+  },
+  "frictions": [],
+  "blockers": [],
+  "toolsUsed": ["jest", "bun test", "tsc"]
+}
+```

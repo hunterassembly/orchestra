@@ -23,6 +23,7 @@ export interface BackendRuntimePaths {
 export interface BackendRuntimePayload extends Record<string, unknown> {
   paths?: BackendRuntimePaths;
   piAuthProvider?: string;
+  codexHome?: string;
 }
 
 export interface BackendResolutionContext {
@@ -111,6 +112,8 @@ export function getDefaultProviderType(provider: AgentProvider): LlmProviderType
   switch (provider) {
     case 'anthropic':
       return 'anthropic';
+    case 'codex':
+      return 'codex';
     case 'pi':
       return 'pi';
   }

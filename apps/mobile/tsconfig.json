@@ -4,10 +4,25 @@
     "strict": true,
     "baseUrl": ".",
     "paths": {
-      "@/*": ["./src/*"]
+      "@/*": [
+        "./src/*"
+      ]
     },
-    "types": ["jest", "jest-expo"]
+    "types": [
+      "jest",
+      "jest-expo"
+    ]
   },
-  "include": ["src", "app.config.ts", "jest.setup.ts"],
-  "exclude": ["node_modules", "src/__tests__", "src/test-utils"]
+  "include": [
+    "src",
+    "app.config.ts",
+    "jest.setup.ts",
+    ".expo/types/**/*.ts",
+    "expo-env.d.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "src/__tests__",
+    "src/test-utils"
+  ]
 }

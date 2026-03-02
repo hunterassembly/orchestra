@@ -27,8 +27,6 @@ import type { SourceManager } from '../core/source-manager.ts';
 import { AbortReason, type RecoveryMessage } from '../core/index.ts';
 export { AbortReason, type RecoveryMessage };
 
-import type { ModelProvider } from '../../config/models.ts';
-
 // Import LLM connection types for auth
 import type { LlmAuthType, LlmProviderType } from '../../config/llm-connections.ts';
 export type { LlmAuthType, LlmProviderType } from '../../config/llm-connections.ts';
@@ -36,9 +34,8 @@ import type { AutomationSystem } from '../../automations/index.ts';
 
 /**
  * Provider identifier for AI backends.
- * @deprecated Use ModelProvider from config/models.ts instead
  */
-export type AgentProvider = ModelProvider;
+export type AgentProvider = 'anthropic' | 'pi' | 'codex';
 
 
 // ============================================================

@@ -760,6 +760,8 @@ interface PendingDelta {
   turnId?: string
 }
 
+export type SessionEventListener = (event: SessionEvent, workspaceId?: string) => void
+
 export class SessionManager {
   private sessions: Map<string, ManagedSession> = new Map()
   private windowManager: WindowManager | null = null
@@ -780,6 +782,8 @@ export class SessionManager {
    * marked as unread when assistant completes - if user is viewing it, don't mark unread.
    */
   private activeViewingSession: Map<string, string> = new Map()
+  /** External event listeners (e.g., mobile gateway SSE bridge). */
+  private eventListeners: Set<SessionEventListener> = new Set()
   /** Coordinates startup initialization waiters from IPC handlers. */
   private initGate = new InitGate()
   /** Monotonic clock to ensure strictly increasing message timestamps */
@@ -793,6 +797,17 @@ export class SessionManager {
 
   setWindowManager(wm: WindowManager): void {
     this.windowManager = wm
+  }
+
+  /**
+   * Subscribe to session events emitted by the manager.
+   * Used by non-renderer consumers (for example, the mobile gateway SSE bridge).
+   */
+  addEventListener(listener: SessionEventListener): () => void {
+    this.eventListeners.add(listener)
+    return () => {
+      this.eventListeners.delete(listener)
+    }
   }
 
   /** Returns a strictly increasing timestamp (ms). When Date.now() collides with
@@ -4991,6 +5006,14 @@ To view this task's output:
   }
 
   private sendEvent(event: SessionEvent, workspaceId?: string): void {
+    for (const listener of this.eventListeners) {
+      try {
+        listener(event, workspaceId)
+      } catch (error) {
+        sessionLog.warn('Session event listener failed:', error)
+      }
+    }
+
     if (!this.windowManager) {
       sessionLog.warn('Cannot send event - no window manager')
       return

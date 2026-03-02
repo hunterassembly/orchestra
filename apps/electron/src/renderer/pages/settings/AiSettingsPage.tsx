@@ -143,7 +143,7 @@ function CredentialHealthBanner({ issues, onReauthenticate }: CredentialHealthBa
 const PI_AUTH_PROVIDER_LABELS: Record<string, string> = {
   anthropic: 'Anthropic API',
   openai: 'OpenAI API',
-  'openai-codex': 'OpenAI API',
+  'openai-codex': 'Codex CLI',
   google: 'Google AI Studio',
   openrouter: 'OpenRouter',
   'azure-openai-responses': 'Azure OpenAI',
@@ -207,6 +207,7 @@ function ConnectionRow({ connection, isLastConnection, onRenameClick, onDelete, 
       case 'anthropic_compat': parts.push('Anthropic Compatible'); break
       case 'bedrock': parts.push('AWS Bedrock'); break
       case 'vertex': parts.push('Google Vertex'); break
+      case 'codex': parts.push('Codex CLI'); break
       case 'pi': {
         // Show upstream provider name for API key connections (e.g. "Google AI Studio")
         const piLabel = !isSubscription && connection.piAuthProvider
@@ -469,6 +470,7 @@ function WorkspaceOverrideCard({ workspace, llmConnections, onSettingsChange }: 
                     value: conn.slug,
                     label: conn.name,
                     description: conn.providerType === 'anthropic' ? 'Anthropic' :
+                                 conn.providerType === 'codex' ? 'Codex CLI' :
                                  conn.providerType === 'pi' ? 'Craft Agents Backend' :
                                  conn.providerType || 'Unknown',
                   })),
@@ -682,9 +684,12 @@ export default function AiSettingsPage() {
     apiSetupOnboarding.reset()
 
     if (connection.authType === 'oauth') {
-      const method = connection.providerType === 'pi'
-                   ? (connection.piAuthProvider === 'github-copilot' ? 'pi_copilot_oauth' : 'pi_chatgpt_oauth')
-                   : 'claude_oauth'
+      const method =
+        connection.providerType === 'codex'
+          ? 'pi_chatgpt_oauth'
+          : connection.providerType === 'pi'
+            ? (connection.piAuthProvider === 'github-copilot' ? 'pi_copilot_oauth' : 'pi_chatgpt_oauth')
+            : 'claude_oauth'
       apiSetupOnboarding.handleStartOAuth(method)
     }
   }, [apiSetupOnboarding, openApiSetup])
@@ -839,6 +844,7 @@ export default function AiSettingsPage() {
                       description: conn.providerType === 'anthropic' ? 'Anthropic API' :
                                    conn.providerType === 'bedrock' ? 'AWS Bedrock' :
                                    conn.providerType === 'vertex' ? 'Google Vertex' :
+                                   conn.providerType === 'codex' ? 'Codex CLI' :
                                    conn.providerType === 'pi' ? 'Craft Agents Backend' :
                                    conn.providerType === 'pi_compat' ? 'Craft Agents Backend Compatible' :
                                    conn.providerType || 'Unknown',

@@ -79,7 +79,7 @@ export interface LlmConnectionSetup {
  * Works for all agent types that use simple API key auth.
  */
 export interface TestLlmConnectionParams {
-  provider: 'anthropic' | 'pi'
+  provider: 'anthropic' | 'codex' | 'pi'
   apiKey: string
   baseUrl?: string           // Custom endpoint (anthropic/openai compat)
   model?: string             // Model to test (uses provider default if omitted)

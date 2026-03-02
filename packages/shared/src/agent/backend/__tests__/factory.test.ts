@@ -29,6 +29,7 @@ import type { BackendConfig } from '../types.ts';
 import type { Workspace, LlmConnection } from '../../../config/storage.ts';
 import type { SessionConfig as Session } from '../../../sessions/storage.ts';
 import { ClaudeAgent } from '../../claude-agent.ts';
+import { CodexAgent } from '../../codex-agent.ts';
 import { PiAgent } from '../../pi-agent.ts';
 import { isValidProviderAuthCombination } from '../../../config/llm-connections.ts';
 
@@ -101,6 +102,15 @@ describe('createBackend / createAgent', () => {
     });
   });
 
+  describe('Codex provider', () => {
+    it('should create CodexAgent for codex provider', () => {
+      const config = createTestConfig({ provider: 'codex' });
+      const agent = createBackend(config);
+
+      expect(agent).toBeInstanceOf(CodexAgent);
+    });
+  });
+
   describe('Unknown provider', () => {
     it('should throw for unknown provider', () => {
       const config = createTestConfig({ provider: 'unknown' as any });
@@ -117,12 +127,13 @@ describe('createBackend / createAgent', () => {
 });
 
 describe('getAvailableProviders', () => {
-  it('should return anthropic and pi', () => {
+  it('should return anthropic, codex, and pi', () => {
     const providers = getAvailableProviders();
 
     expect(providers).toContain('anthropic');
+    expect(providers).toContain('codex');
     expect(providers).toContain('pi');
-    expect(providers).toHaveLength(2);
+    expect(providers).toHaveLength(3);
   });
 });
 
@@ -135,6 +146,10 @@ describe('isProviderAvailable', () => {
     expect(isProviderAvailable('pi')).toBe(true);
   });
 
+  it('should return true for codex', () => {
+    expect(isProviderAvailable('codex')).toBe(true);
+  });
+
   it('should return false for unknown provider', () => {
     expect(isProviderAvailable('unknown' as any)).toBe(false);
   });
@@ -145,8 +160,8 @@ describe('connectionTypeToProvider', () => {
     expect(connectionTypeToProvider('anthropic')).toBe('anthropic');
   });
 
-  it('should map openai type to pi provider (legacy routing)', () => {
-    expect(connectionTypeToProvider('openai')).toBe('pi');
+  it('should map openai type to codex provider (legacy routing)', () => {
+    expect(connectionTypeToProvider('openai')).toBe('codex');
   });
 
   it('should map openai-compat type to pi provider (legacy routing)', () => {
@@ -192,6 +207,10 @@ describe('providerTypeToAgentProvider', () => {
   });
 
   describe('Pi SDK providers', () => {
+    it('should map codex to codex', () => {
+      expect(providerTypeToAgentProvider('codex')).toBe('codex');
+    });
+
     it('should map pi to pi', () => {
       expect(providerTypeToAgentProvider('pi')).toBe('pi');
     });
@@ -246,6 +265,16 @@ describe('isValidProviderAuthCombination', () => {
 
     it('should accept none auth', () => {
       expect(isValidProviderAuthCombination('pi', 'none')).toBe(true);
+    });
+  });
+
+  describe('Codex provider', () => {
+    it('should accept oauth auth', () => {
+      expect(isValidProviderAuthCombination('codex', 'oauth')).toBe(true);
+    });
+
+    it('should reject api_key auth', () => {
+      expect(isValidProviderAuthCombination('codex', 'api_key')).toBe(false);
     });
   });
 
@@ -319,6 +348,10 @@ describe('phase4 backend abstraction APIs', () => {
     })).toEqual({ providerType: 'anthropic' });
 
     expect(resolveSetupTestConnectionHint({
+      provider: 'codex',
+    })).toEqual({ providerType: 'codex', piAuthProvider: 'openai-codex' });
+
+    expect(resolveSetupTestConnectionHint({
       provider: 'pi',
       piAuthProvider: 'openai-codex',
     })).toEqual({ providerType: 'pi', piAuthProvider: 'openai-codex' });
@@ -330,6 +363,28 @@ describe('phase4 backend abstraction APIs', () => {
       name: 'Pi Test',
       providerType: 'pi',
       authType: 'none',
+      createdAt: Date.now(),
+    };
+
+    const result = await fetchBackendModels({
+      connection,
+      credentials: {},
+      hostRuntime: {
+        appRootPath: process.cwd(),
+        isPackaged: false,
+      },
+    });
+
+    expect(result.models.length).toBeGreaterThan(0);
+  });
+
+  it('fetchBackendModels dispatches for codex provider', async () => {
+    const connection: LlmConnection = {
+      slug: 'codex-test',
+      name: 'Codex Test',
+      providerType: 'codex',
+      authType: 'oauth',
+      piAuthProvider: 'openai-codex',
       createdAt: Date.now(),
     };
 

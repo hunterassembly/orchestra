@@ -2,8 +2,9 @@
  * Agent Factory
  *
  * Creates the appropriate AI agent based on configuration.
- * Supports two agents:
+ * Supports three providers:
  * - ClaudeAgent (Anthropic) - Default, using @anthropic-ai/claude-agent-sdk
+ * - CodexAgent (OpenAI Codex runtime) - app-server mode
  * - PiAgent (Pi) - Using @mariozechner/pi-ai SDK
  *
  * All agents implement AgentBackend directly.
@@ -24,6 +25,7 @@ import type {
   BackendHostRuntimeContext,
 } from './types.ts';
 import { ClaudeAgent } from '../claude-agent.ts';
+import { CodexAgent } from '../codex-agent.ts';
 import { PiAgent } from '../pi-agent.ts';
 import {
   getLlmConnection,
@@ -58,10 +60,12 @@ import {
   resolveBackendRuntimePaths,
 } from './internal/runtime-resolver.ts';
 import { anthropicDriver } from './internal/drivers/anthropic.ts';
+import { codexDriver } from './internal/drivers/codex.ts';
 import { piDriver } from './internal/drivers/pi.ts';
 
 const DRIVER_REGISTRY: Record<AgentProvider, ProviderDriver> = {
   anthropic: anthropicDriver,
+  codex: codexDriver,
   pi: piDriver,
 };
 
@@ -122,9 +126,9 @@ export function detectProvider(authType: string): AgentProvider {
  *   model: 'claude-sonnet-4-5-20250929',
  * });
  *
- * // Create Codex backend (uses app-server mode)
+ * // Create Codex backend
  * const codexBackend = createBackend({
- *   provider: 'openai',
+ *   provider: 'codex',
  *   workspace: myWorkspace,
  * });
  * ```
@@ -134,6 +138,9 @@ export function createBackend(config: BackendConfig): AgentBackend {
     case 'anthropic':
       // ClaudeAgent implements AgentBackend directly
       return new ClaudeAgent(config);
+
+    case 'codex':
+      return new CodexAgent(config);
 
     case 'pi':
       // PiAgent implements AgentBackend directly
@@ -221,7 +228,7 @@ export function resolveBackendHostTooling(args: {
  * @returns Array of provider identifiers that have working implementations
  */
 export function getAvailableProviders(): AgentProvider[] {
-  return ['anthropic', 'pi'];
+  return ['anthropic', 'codex', 'pi'];
 }
 
 /**
@@ -257,6 +264,10 @@ export function providerTypeToAgentProvider(providerType: LlmProviderType): Agen
     case 'vertex':     // Vertex uses Anthropic SDK with different auth
       return 'anthropic';
 
+    // Codex runtime backend
+    case 'codex':
+      return 'codex';
+
     // Pi backends
     case 'pi':
     case 'pi_compat':
@@ -281,8 +292,9 @@ export function connectionTypeToProvider(connectionType: LlmConnectionType): Age
     case 'anthropic':
       return 'anthropic';
     case 'openai':
+      return 'codex';
     case 'openai-compat':
-      return 'pi'; // Legacy OpenAI connections are now routed through Pi
+      return 'pi'; // Legacy custom OpenAI-compatible endpoints are routed through Pi
     default:
       return 'anthropic';
   }
@@ -391,6 +403,13 @@ export function resolveSetupTestConnectionHint(args: {
   baseUrl?: string;
   piAuthProvider?: string;
 }): Pick<LlmConnection, 'providerType' | 'piAuthProvider'> {
+  if (args.provider === 'codex') {
+    return {
+      providerType: 'codex',
+      piAuthProvider: 'openai-codex',
+    };
+  }
+
   if (args.provider === 'pi') {
     return {
       providerType: 'pi',
@@ -581,6 +600,7 @@ export const BACKEND_CAPABILITIES: Record<AgentProvider, {
   needsHttpPoolServer: boolean;
 }> = {
   anthropic: { needsHttpPoolServer: false },
+  codex: { needsHttpPoolServer: false },
   pi: { needsHttpPoolServer: false },
 };
 
@@ -597,6 +617,7 @@ export const BACKEND_CAPABILITIES: Record<AgentProvider, {
 export function getDefaultAuthType(provider: AgentProvider): LlmAuthType | undefined {
   switch (provider) {
     case 'anthropic': return undefined;
+    case 'codex':     return 'oauth';
     case 'pi':        return 'api_key';
     default:          return undefined;
   }
@@ -633,6 +654,7 @@ export function resolveModelForProvider(
   }
 
   switch (provider) {
+    case 'codex':
     case 'pi':
       return managedModel || connection?.defaultModel || '';
     default:
@@ -688,7 +710,9 @@ export async function testBackendConnection(args: {
       providerType === 'anthropic_compat' || providerType === 'pi_compat'
     )
       ? 'api_key_with_endpoint'
-      : 'api_key';
+      : providerType === 'codex'
+        ? 'oauth'
+        : 'api_key';
 
     const syntheticConnection = {
       slug: tempSlug,
@@ -803,6 +827,7 @@ export async function validateConnection(
     }
 
     case 'pi':
+    case 'codex':
       // Pi validates on connect via its auth storage — no pre-flight check available
       return { success: true };
 

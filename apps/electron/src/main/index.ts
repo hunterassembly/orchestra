@@ -89,6 +89,7 @@ import { getPiModelsForAuthProvider, getAllPiModels } from '@craft-agent/shared/
 import { initNotificationService, clearBadgeCount, initBadgeIcon, initInstanceBadge } from './notifications'
 import { checkForUpdatesOnLaunch, setWindowManager as setAutoUpdateWindowManager, isUpdating } from './auto-update'
 import { validateGitBashPath } from './git-bash'
+import { createMobileGatewayController, type MobileGatewayController } from './mobile-gateway'
 
 // Initialize electron-log for renderer process support
 log.initialize()
@@ -112,6 +113,7 @@ const DEEPLINK_SCHEME = process.env.CRAFT_DEEPLINK_SCHEME || 'craftagents'
 
 let windowManager: WindowManager | null = null
 let sessionManager: SessionManager | null = null
+let mobileGatewayController: MobileGatewayController | null = null
 
 // Store pending deep link if app not ready yet (cold start)
 let pendingDeepLink: string | null = null
@@ -354,6 +356,15 @@ app.whenReady().then(async () => {
     // Initialize auth (must happen after window creation for error reporting)
     await sessionManager.initialize()
 
+    // Start mobile gateway server (REST + SSE bridge for Expo iOS client)
+    try {
+      mobileGatewayController = createMobileGatewayController(sessionManager)
+      await mobileGatewayController.start()
+    } catch (error) {
+      mobileGatewayController = null
+      mainLog.error('[mobile-gateway] Failed to start:', error)
+    }
+
     // Start periodic model refresh after auth is initialized
     modelRefreshService.startAll()
 
@@ -483,6 +494,17 @@ app.on('before-quit', async (event) => {
     }
     // Clean up SessionManager resources (file watchers, timers, etc.)
     sessionManager.cleanup()
+
+    // Stop mobile gateway server and detach event bridge listeners
+    if (mobileGatewayController) {
+      try {
+        await mobileGatewayController.stop()
+      } catch (error) {
+        mainLog.error('[mobile-gateway] Failed to stop cleanly:', error)
+      } finally {
+        mobileGatewayController = null
+      }
+    }
 
     // Stop all model refresh timers
     getModelRefreshService().stopAll()

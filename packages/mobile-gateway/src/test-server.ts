@@ -1822,7 +1822,14 @@ if (import.meta.main) {
     void shutdown();
   });
 
-  const { host, port } = await server.start();
-  // eslint-disable-next-line no-console
-  console.log(`[mobile-gateway:test-server] listening on http://${host}:${port}`);
+  void server.start()
+    .then(({ host, port }) => {
+      // eslint-disable-next-line no-console
+      console.log(`[mobile-gateway:test-server] listening on http://${host}:${port}`);
+    })
+    .catch((error) => {
+      // eslint-disable-next-line no-console
+      console.error('[mobile-gateway:test-server] failed to start', error);
+      process.exitCode = 1;
+    });
 }

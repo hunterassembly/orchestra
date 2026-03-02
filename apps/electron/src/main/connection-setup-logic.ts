@@ -70,7 +70,7 @@ export const BUILT_IN_CONNECTION_TEMPLATES: Record<string, {
   },
   'chatgpt-plus': {
     name: 'ChatGPT Plus',
-    providerType: 'pi',
+    providerType: 'codex',
     authType: 'oauth',
     piAuthProvider: 'openai-codex',
   },
@@ -95,7 +95,7 @@ export const BUILT_IN_CONNECTION_TEMPLATES: Record<string, {
 const PI_AUTH_PROVIDER_DISPLAY_NAMES: Record<string, string> = {
   anthropic: 'Anthropic',
   openai: 'OpenAI',
-  'openai-codex': 'OpenAI',
+  'openai-codex': 'Codex CLI',
   google: 'Google AI Studio',
   openrouter: 'OpenRouter',
   'azure-openai-responses': 'Azure OpenAI',

@@ -46,6 +46,7 @@ const providerDisplayNames: Record<string, string> = {
   anthropic_compat: 'Anthropic',
   openai: 'OpenAI',
   openai_compat: 'OpenAI',
+  codex: 'Codex CLI',
   copilot: 'GitHub Copilot',
   ollama: 'Ollama',
   openrouter: 'OpenRouter',
@@ -159,6 +160,7 @@ export function getProviderIcon(
       return providerIcons.anthropic
     case 'openai':
     case 'openai_compat':
+    case 'codex':
       return providerIcons.openai
     case 'copilot':
       return providerIcons.copilot
