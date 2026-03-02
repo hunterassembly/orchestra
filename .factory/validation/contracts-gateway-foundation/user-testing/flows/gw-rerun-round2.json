@@ -1,0 +1,18 @@
+{
+  "groupId": "gw-rerun-round2",
+  "assertions": {
+    "VAL-GW-005": {
+      "status": "pass",
+      "evidence": "GET /api/sessions/seeded-session-1 returned HTTP 200 with messages array containing 2 seeded messages with correct MessageDTO fields.",
+      "details": "HTTP 200. messages count=2. message[0]: id=seeded-message-1, role=user, content='Seeded user message'. message[1]: id=seeded-message-2, role=assistant, content='Seeded assistant reply'. hasMore=false, nextCursor=null. All MessageDTO fields (id, role, content, timestamp) present."
+    },
+    "VAL-GW-014": {
+      "status": "pass",
+      "evidence": "POST /api/workspaces/default/sessions with workingDirectory returned 201 with workingDirectory in response. Subsequent GET returned matching workingDirectory field.",
+      "details": "POST HTTP 201. Response: id=session-2, name=val-test-session, workingDirectory=/tmp/test-project. GET /api/sessions/session-2 HTTP 200. Response contains name=val-test-session, workingDirectory=/tmp/test-project. Both CreateSessionOptions and SessionDTO correctly serialize workingDirectory."
+    }
+  },
+  "frictions": [],
+  "blockers": [],
+  "toolsUsed": ["curl", "python3"]
+}
