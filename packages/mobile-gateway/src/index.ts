@@ -13,3 +13,11 @@ export {
 export { parseJsonBody, parseQuery, readRequestBody, RequestParsingError } from './request-parsing.ts';
 export { createRouter, type HttpMethod, type RouteDefinition, type RouterMatchResult } from './router.ts';
 export { error, json, noContent } from './response-helpers.ts';
+export {
+  paginateMessages,
+  serializeMessage,
+  serializeSession,
+  type GatewayMessageLike,
+  type GatewaySessionLike,
+  type PaginatedMessagesDTO,
+} from './session-serializers.ts';
