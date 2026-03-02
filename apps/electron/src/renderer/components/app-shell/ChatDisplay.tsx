@@ -45,6 +45,7 @@ import type { ThinkingLevel } from "@craft-agent/shared/agent/thinking-levels"
 import { TurnCard, UserMessageBubble, groupMessagesByTurn, formatTurnAsMarkdown, formatActivityAsMarkdown, type Turn, type AssistantTurn, type UserTurn, type SystemTurn, type AuthRequestTurn } from "@craft-agent/ui"
 import { MemoizedAuthRequestCard } from "@/components/chat/AuthRequestCard"
 import { ActiveOptionBadges } from "./ActiveOptionBadges"
+import { ChatMinimap } from "./ChatMinimap"
 import { InputContainer, type StructuredInputState, type StructuredResponse, type PermissionResponse } from "./input"
 import type { RichTextInputHandle } from "@/components/ui/rich-text-input"
 import { useBackgroundTasks } from "@/hooks/useBackgroundTasks"
@@ -58,7 +59,7 @@ import { flattenLabels } from "@craft-agent/shared/labels"
 // ============================================================================
 
 /** State for multi-diff overlay (Edit/Write activities) */
-interface MultiDiffOverlayState {
+export interface MultiDiffOverlayState {
   type: 'multi-diff'
   changes: FileChange[]
   consolidated: boolean
@@ -66,7 +67,7 @@ interface MultiDiffOverlayState {
 }
 
 /** State for markdown overlay (pop-out, turn details, generic activities) */
-interface MarkdownOverlayState {
+export interface MarkdownOverlayState {
   type: 'markdown'
   content: string
   title: string
@@ -74,12 +75,14 @@ interface MarkdownOverlayState {
   forceCodeView?: boolean
 }
 
-/** Union of all overlay states, or null for no overlay */
-type OverlayState =
+/** Union of all overlay states (exported for tab system) */
+export type ChatOverlayState =
   | { type: 'activity'; activity: ActivityItem }
   | MultiDiffOverlayState
   | MarkdownOverlayState
-  | null
+
+/** Internal: includes null for "no overlay" */
+type OverlayState = ChatOverlayState | null
 
 /**
  * Checks if a file path is in a plans folder and is a markdown file.
@@ -184,6 +187,8 @@ interface ChatDisplayProps {
   emptyStateLabel?: string
   /** When true, the session's locked connection has been removed - disables send and shows unavailable state */
   connectionUnavailable?: boolean
+  /** When provided, turn expansions open as tabs instead of overlays */
+  onOpenTurnAsTab?: (overlay: ChatOverlayState, label: string) => void
 }
 
 /**
@@ -428,6 +433,8 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
   emptyStateLabel,
   // Connection unavailable
   connectionUnavailable = false,
+  // Tab system
+  onOpenTurnAsTab,
 }, ref) {
   // Input is only disabled when explicitly disabled (e.g., agent needs activation)
   // User can type during streaming - submitting will stop the stream and send
@@ -995,6 +1002,15 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
     setOverlayState(null)
   }, [])
 
+  // Helper: open overlay as tab (when onOpenTurnAsTab provided) or inline
+  const openOverlay = useCallback((state: ChatOverlayState, label: string) => {
+    if (onOpenTurnAsTab) {
+      onOpenTurnAsTab(state, label)
+    } else {
+      setOverlayState(state)
+    }
+  }, [onOpenTurnAsTab])
+
   // Extract overlay data for activity-based overlays
   // Uses the shared extractOverlayData parser from @craft-agent/ui
   const overlayData: OverlayData | null = useMemo(() => {
@@ -1005,12 +1021,12 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
   // Pop-out handler - opens message in overlay (read-only markdown)
   const handlePopOut = useCallback((message: Message) => {
     if (!session) return
-    setOverlayState({
+    openOverlay({
       type: 'markdown',
       content: message.content,
       title: 'Message Preview',
-    })
-  }, [session])
+    }, 'Message Preview')
+  }, [session, openOverlay])
 
   // Helper to collect Edit/Write activities into FileChange array
   // Used by both onOpenActivityDetails and onOpenMultiFileDiff
@@ -1177,6 +1193,14 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
     if (!viewport) return
     // Adjust scroll to maintain position relative to content
     viewport.scrollTop += delta
+  }, [])
+
+  // Scroll to a specific turn by key (used by ChatMinimap)
+  const handleScrollToTurn = React.useCallback((turnKey: string) => {
+    const el = turnRefs.current.get(turnKey)
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    }
   }, [])
 
   // Handle structured input responses (permissions and credentials)
@@ -1437,21 +1461,21 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
                         }}
                         onPopOut={(text) => {
                           // Open raw markdown source in code viewer
-                          setOverlayState({
+                          openOverlay({
                             type: 'markdown',
                             content: text,
                             title: 'Response Preview',
                             forceCodeView: true,
-                          })
+                          }, 'Response')
                         }}
                         onOpenDetails={() => {
                           // Open turn details in markdown overlay
                           const markdown = formatTurnAsMarkdown(turn)
-                          setOverlayState({
+                          openOverlay({
                             type: 'markdown',
                             content: markdown,
                             title: 'Turn Details',
-                          })
+                          }, 'Turn Details')
                         }}
                         onOpenActivityDetails={(activity) => {
                           // Write tool for .md/.txt → Document overlay (rendered markdown)
@@ -1468,16 +1492,17 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
                           if ((activity.toolName === 'Edit' || activity.toolName === 'Write') && !isDocumentWrite) {
                             const changes = collectFileChanges(turn.activities)
                             if (changes.length > 0) {
-                              setOverlayState({
+                              openOverlay({
                                 type: 'multi-diff',
                                 changes,
                                 consolidated: false, // Ungrouped mode - show individual changes
                                 focusedChangeId: activity.id, // Focus on clicked activity
-                              })
+                              }, activity.toolName)
                             }
                           } else {
                             // All other tools → Use extractOverlayData for appropriate overlay
-                            setOverlayState({ type: 'activity', activity })
+                            const label = activity.toolName || 'Activity'
+                            openOverlay({ type: 'activity', activity }, label)
                           }
                         }}
                         hasEditOrWriteActivities={turn.activities.some(a =>
@@ -1486,13 +1511,20 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
                         onOpenMultiFileDiff={() => {
                           const changes = collectFileChanges(turn.activities)
                           if (changes.length > 0) {
-                            setOverlayState({
+                            openOverlay({
                               type: 'multi-diff',
                               changes,
                               consolidated: true, // Consolidated mode - group by file
-                            })
+                            }, 'All Changes')
                           }
                         }}
+                        onExpandFullscreen={onOpenTurnAsTab ? (text, variant) => {
+                          openOverlay({
+                            type: 'markdown',
+                            content: text,
+                            title: variant === 'plan' ? 'Plan' : 'Response',
+                          }, variant === 'plan' ? 'Plan' : 'Response')
+                        } : undefined}
                       />
                       </div>
                     )
@@ -1518,6 +1550,15 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
               </div>
               </ScrollArea>
             </div>
+            {/* Chat minimap / message scrubber */}
+            {!compactMode && allTurns.length > 0 && (
+              <ChatMinimap
+                turns={allTurns}
+                scrollViewportRef={scrollViewportRef}
+                turnRefs={turnRefs}
+                onScrollToTurn={handleScrollToTurn}
+              />
+            )}
           </div>
 
           {/* === INPUT CONTAINER: FreeForm or Structured Input === */}
@@ -1618,127 +1659,130 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
 
       {/* ================================================================== */}
       {/* Preview Overlays - Rendered outside the main chat flow            */}
+      {/* When onOpenTurnAsTab is provided, overlays open as tabs instead   */}
       {/* ================================================================== */}
 
-      {/* Code preview overlay (Read tool) */}
-      {overlayData?.type === 'code' && (
-        <CodePreviewOverlay
-          isOpen={!!overlayState}
-          onClose={handleCloseOverlay}
-          content={overlayData.content}
-          filePath={overlayData.filePath}
-          mode={overlayData.mode}
-          startLine={overlayData.startLine}
-          totalLines={overlayData.totalLines}
-          numLines={overlayData.numLines}
-          theme={isDark ? 'dark' : 'light'}
-          error={overlayData.error}
-          command={overlayData.command}
-        />
-      )}
+      {!onOpenTurnAsTab && (
+        <>
+          {/* Code preview overlay (Read tool) */}
+          {overlayData?.type === 'code' && (
+            <CodePreviewOverlay
+              isOpen={!!overlayState}
+              onClose={handleCloseOverlay}
+              content={overlayData.content}
+              filePath={overlayData.filePath}
+              mode={overlayData.mode}
+              startLine={overlayData.startLine}
+              totalLines={overlayData.totalLines}
+              numLines={overlayData.numLines}
+              theme={isDark ? 'dark' : 'light'}
+              error={overlayData.error}
+              command={overlayData.command}
+            />
+          )}
 
-      {/* Multi-diff preview overlay (Edit/Write tools) */}
-      {overlayState?.type === 'multi-diff' && (
-        <MultiDiffPreviewOverlay
-          isOpen={true}
-          onClose={handleCloseOverlay}
-          changes={overlayState.changes}
-          consolidated={overlayState.consolidated}
-          focusedChangeId={overlayState.focusedChangeId}
-          theme={isDark ? 'dark' : 'light'}
-          diffViewerSettings={diffViewerSettings}
-          onDiffViewerSettingsChange={handleDiffViewerSettingsChange}
-        />
-      )}
+          {/* Multi-diff preview overlay (Edit/Write tools) */}
+          {overlayState?.type === 'multi-diff' && (
+            <MultiDiffPreviewOverlay
+              isOpen={true}
+              onClose={handleCloseOverlay}
+              changes={overlayState.changes}
+              consolidated={overlayState.consolidated}
+              focusedChangeId={overlayState.focusedChangeId}
+              theme={isDark ? 'dark' : 'light'}
+              diffViewerSettings={diffViewerSettings}
+              onDiffViewerSettingsChange={handleDiffViewerSettingsChange}
+            />
+          )}
 
-      {/* Terminal preview overlay (Bash/Grep/Glob tools) */}
-      {overlayData?.type === 'terminal' && (
-        <TerminalPreviewOverlay
-          isOpen={!!overlayState}
-          onClose={handleCloseOverlay}
-          command={overlayData.command}
-          output={overlayData.output}
-          exitCode={overlayData.exitCode}
-          toolType={overlayData.toolType}
-          description={overlayData.description}
-          theme={isDark ? 'dark' : 'light'}
-          error={overlayData.error}
-        />
-      )}
+          {/* Terminal preview overlay (Bash/Grep/Glob tools) */}
+          {overlayData?.type === 'terminal' && (
+            <TerminalPreviewOverlay
+              isOpen={!!overlayState}
+              onClose={handleCloseOverlay}
+              command={overlayData.command}
+              output={overlayData.output}
+              exitCode={overlayData.exitCode}
+              toolType={overlayData.toolType}
+              description={overlayData.description}
+              theme={isDark ? 'dark' : 'light'}
+              error={overlayData.error}
+            />
+          )}
 
-      {/* JSON preview overlay (MCP tools, WebSearch, etc.) */}
-      {overlayData?.type === 'json' && (
-        <JSONPreviewOverlay
-          isOpen={!!overlayState}
-          onClose={handleCloseOverlay}
-          data={overlayData.data}
-          title={overlayData.title}
-          theme={isDark ? 'dark' : 'light'}
-          error={overlayData.error}
-        />
-      )}
+          {/* JSON preview overlay (MCP tools, WebSearch, etc.) */}
+          {overlayData?.type === 'json' && (
+            <JSONPreviewOverlay
+              isOpen={!!overlayState}
+              onClose={handleCloseOverlay}
+              data={overlayData.data}
+              title={overlayData.title}
+              theme={isDark ? 'dark' : 'light'}
+              error={overlayData.error}
+            />
+          )}
 
-      {/* Document overlay (Write tool → .md/.txt files) — rendered markdown with tool badge */}
-      {overlayData?.type === 'document' && (
-        <DocumentFormattedMarkdownOverlay
-          isOpen={!!overlayState}
-          onClose={handleCloseOverlay}
-          content={overlayData.content}
-          filePath={overlayData.filePath}
-          typeBadge={{ icon: PenLine, label: overlayData.toolName, variant: 'write' }}
-          onOpenUrl={onOpenUrl}
-          onOpenFile={onOpenFile}
-          error={overlayData.error}
-          variant={isPlanFilePath(overlayData.filePath) ? 'plan' : 'response'}
-        />
-      )}
+          {/* Document overlay (Write tool → .md/.txt files) — rendered markdown with tool badge */}
+          {overlayData?.type === 'document' && (
+            <DocumentFormattedMarkdownOverlay
+              isOpen={!!overlayState}
+              onClose={handleCloseOverlay}
+              content={overlayData.content}
+              filePath={overlayData.filePath}
+              typeBadge={{ icon: PenLine, label: overlayData.toolName, variant: 'write' }}
+              onOpenUrl={onOpenUrl}
+              onOpenFile={onOpenFile}
+              error={overlayData.error}
+              variant={isPlanFilePath(overlayData.filePath) ? 'plan' : 'response'}
+            />
+          )}
 
-      {/* Markdown preview overlay (pop-out, turn details) */}
-      {/* forceCodeView: show raw markdown source in code viewer (used by "View as Markdown" button) */}
-      {/* otherwise: render formatted markdown (used by turn details, etc.) */}
-      {overlayState?.type === 'markdown' && (
-        overlayState.forceCodeView ? (
-          <CodePreviewOverlay
-            isOpen={true}
-            onClose={handleCloseOverlay}
-            content={overlayState.content}
-            filePath="response.md"
-            language="markdown"
-            mode="read"
-            theme={isDark ? 'dark' : 'light'}
-          />
-        ) : (
-          <DocumentFormattedMarkdownOverlay
-            isOpen={true}
-            onClose={handleCloseOverlay}
-            content={overlayState.content}
-            onOpenUrl={onOpenUrl}
-            onOpenFile={onOpenFile}
-          />
-        )
-      )}
+          {/* Markdown preview overlay (pop-out, turn details) */}
+          {overlayState?.type === 'markdown' && (
+            overlayState.forceCodeView ? (
+              <CodePreviewOverlay
+                isOpen={true}
+                onClose={handleCloseOverlay}
+                content={overlayState.content}
+                filePath="response.md"
+                language="markdown"
+                mode="read"
+                theme={isDark ? 'dark' : 'light'}
+              />
+            ) : (
+              <DocumentFormattedMarkdownOverlay
+                isOpen={true}
+                onClose={handleCloseOverlay}
+                content={overlayState.content}
+                onOpenUrl={onOpenUrl}
+                onOpenFile={onOpenFile}
+              />
+            )
+          )}
 
-      {/* Generic overlay for unknown tool types - route markdown to fullscreen viewer */}
-      {overlayData?.type === 'generic' && (
-        detectLanguage(overlayData.content) === 'markdown' ? (
-          <DocumentFormattedMarkdownOverlay
-            isOpen={true}
-            onClose={handleCloseOverlay}
-            content={overlayData.content}
-            onOpenUrl={onOpenUrl}
-            onOpenFile={onOpenFile}
-            error={overlayData.error}
-          />
-        ) : (
-          <GenericOverlay
-            isOpen={!!overlayState}
-            onClose={handleCloseOverlay}
-            content={overlayData.content}
-            title={overlayData.title}
-            theme={isDark ? 'dark' : 'light'}
-            error={overlayData.error}
-          />
-        )
+          {/* Generic overlay for unknown tool types - route markdown to fullscreen viewer */}
+          {overlayData?.type === 'generic' && (
+            detectLanguage(overlayData.content) === 'markdown' ? (
+              <DocumentFormattedMarkdownOverlay
+                isOpen={true}
+                onClose={handleCloseOverlay}
+                content={overlayData.content}
+                onOpenUrl={onOpenUrl}
+                onOpenFile={onOpenFile}
+                error={overlayData.error}
+              />
+            ) : (
+              <GenericOverlay
+                isOpen={!!overlayState}
+                onClose={handleCloseOverlay}
+                content={overlayData.content}
+                title={overlayData.title}
+                theme={isDark ? 'dark' : 'light'}
+                error={overlayData.error}
+              />
+            )
+          )}
+        </>
       )}
     </div>
   )

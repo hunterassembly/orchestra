@@ -29,6 +29,8 @@ export const KEYS = {
   rightSidebarWidth: 'right-sidebar-width',
   sessionInfoMetadataHeight: 'session-info-metadata-height', // Height of metadata section in session info panel
   sessionFilesExpandedFolders: 'session-files-expanded', // Expanded folders in session files tree (keyed by sessionId)
+  workspaceFilesExpandedFolders: 'workspace-files-expanded', // Expanded folders in workspace file tree
+  workspaceFilesActiveTab: 'workspace-files-active-tab', // Active tab in workspace files panel ('files' | 'changes')
 
   // Theme
   theme: 'theme',

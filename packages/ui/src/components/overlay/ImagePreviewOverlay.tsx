@@ -20,6 +20,8 @@ export interface ImagePreviewOverlayProps {
   /** Async loader that returns a data URL (data:{mime};base64,...) */
   loadDataUrl: (path: string) => Promise<string>
   theme?: 'light' | 'dark'
+  /** Render inline (no dialog/portal) — for embedding in tab content */
+  embedded?: boolean
 }
 
 export function ImagePreviewOverlay({
@@ -28,6 +30,7 @@ export function ImagePreviewOverlay({
   filePath,
   loadDataUrl,
   theme = 'light',
+  embedded = false,
 }: ImagePreviewOverlayProps) {
   const [dataUrl, setDataUrl] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -77,6 +80,7 @@ export function ImagePreviewOverlay({
       filePath={filePath}
       error={error ? { label: 'Load Failed', message: error } : undefined}
       headerActions={headerActions}
+      embedded={embedded}
     >
       <div className="min-h-full flex items-center justify-center p-4">
         {isLoading && (
