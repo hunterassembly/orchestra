@@ -1,4 +1,4 @@
-import { DEFAULT_THEME } from '../../shared/src/config/theme.ts';
+import { DEFAULT_THEME } from '../../shared/src/config/theme';
 
 export type ColorMode = 'light' | 'dark';
 

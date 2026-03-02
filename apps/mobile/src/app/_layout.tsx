@@ -4,6 +4,7 @@ import { ActivityIndicator, StyleSheet, View } from "react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 
 import { AuthProvider, useAuthState } from "@/state/auth";
+import { ThemeProvider } from "@/theme/theme-provider";
 
 function RootNavigator() {
   const { isHydrated, token } = useAuthState();
@@ -32,9 +33,13 @@ export default function RootLayout() {
     SafeAreaProvider as never,
     null,
     createElement(
-      AuthProvider as never,
+      ThemeProvider as never,
       null,
-      createElement(RootNavigator as never),
+      createElement(
+        AuthProvider as never,
+        null,
+        createElement(RootNavigator as never),
+      ),
     ),
   );
 }
