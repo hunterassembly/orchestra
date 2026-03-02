@@ -19,7 +19,8 @@
     "react": "19.2.0",
     "react-native": "0.83.0",
     "react-native-sse": "^1.2.1",
-    "react-native-safe-area-context": "^5.7.0"
+    "react-native-safe-area-context": "^5.7.0",
+    "zustand": "^5.0.8"
   },
   "devDependencies": {
     "@testing-library/react-native": "^13.3.3",
