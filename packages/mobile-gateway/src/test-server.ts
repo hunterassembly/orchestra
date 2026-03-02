@@ -1,10 +1,20 @@
 import type { ServerResponse } from 'node:http';
-import type { CreateSessionOptionsDTO, PermissionModeDTO, SessionEventDTO, WorkspaceDTO } from '@craft-agent/mobile-contracts';
+import type {
+  CreateSessionOptionsDTO,
+  MessageDTO,
+  PermissionModeDTO,
+  SendMessageOptionsDTO,
+  SessionEventDTO,
+  TokenUsageDTO,
+  WorkspaceDTO,
+} from '@craft-agent/mobile-contracts';
 
 import {
   createGatewayServer,
   paginateMessages,
+  serializeSessionEvent,
   serializeSession,
+  type GatewaySessionEventLike,
   type GatewayServer,
   type GatewaySessionLike,
   type GatewaySessionManager,
@@ -19,6 +29,12 @@ export interface MockSession extends GatewaySessionLike {
 export interface MockSessionManagerHooks {
   onCreateSession?: (workspaceId: string, options: CreateSessionOptionsDTO) => void;
   onDeleteSession?: (sessionId: string) => void;
+  onSendMessage?: (sessionId: string, text: string, options: SendMessageOptionsDTO) => void;
+}
+
+export interface MockSendMessageResult {
+  status?: 200 | 202;
+  events: GatewaySessionEventLike[];
 }
 
 export interface CreateMockSessionManagerOptions {
@@ -32,6 +48,7 @@ export interface MockSessionManager extends GatewaySessionManager {
   getSessions: (workspaceId: string) => Promise<MockSession[]>;
   getSession: (sessionId: string) => Promise<MockSession | null>;
   createSession: (workspaceId: string, options: CreateSessionOptionsDTO) => Promise<MockSession>;
+  sendMessage: (sessionId: string, text: string, options: SendMessageOptionsDTO) => Promise<MockSendMessageResult>;
   deleteSession: (sessionId: string) => Promise<boolean>;
 }
 
@@ -48,6 +65,7 @@ const DEFAULT_HOST = '127.0.0.1';
 const DEFAULT_VERSION = '0.0.0';
 const DEFAULT_SSE_HEARTBEAT_INTERVAL_MS = 30_000;
 const VALID_PERMISSION_MODES: PermissionModeDTO[] = ['safe', 'ask', 'allow-all'];
+const MESSAGE_SEND_ACCEPTED_STATUS = 202;
 
 function createDefaultSeededSessions(workspaceId: string): MockSession[] {
   return [
@@ -121,6 +139,84 @@ function parseCreateSessionOptions(input: unknown): CreateSessionOptionsDTO | nu
   }
 
   return options;
+}
+
+function parseSendMessageOptions(input: unknown): SendMessageOptionsDTO | null {
+  if (input === undefined || input === null) {
+    return {};
+  }
+
+  if (typeof input !== 'object' || Array.isArray(input)) {
+    return null;
+  }
+
+  const candidate = input as Record<string, unknown>;
+  const options: SendMessageOptionsDTO = {};
+
+  if (candidate.optimisticMessageId !== undefined) {
+    if (typeof candidate.optimisticMessageId !== 'string' || candidate.optimisticMessageId.trim().length === 0) {
+      return null;
+    }
+
+    options.optimisticMessageId = candidate.optimisticMessageId;
+  }
+
+  if (candidate.ultrathinkEnabled !== undefined) {
+    if (typeof candidate.ultrathinkEnabled !== 'boolean') {
+      return null;
+    }
+
+    options.ultrathinkEnabled = candidate.ultrathinkEnabled;
+  }
+
+  if (candidate.skillSlugs !== undefined) {
+    if (!Array.isArray(candidate.skillSlugs)) {
+      return null;
+    }
+
+    const skillSlugs = candidate.skillSlugs
+      .map((skillSlug) => (typeof skillSlug === 'string' ? skillSlug.trim() : ''));
+
+    if (skillSlugs.some((skillSlug) => skillSlug.length === 0)) {
+      return null;
+    }
+
+    options.skillSlugs = skillSlugs;
+  }
+
+  return options;
+}
+
+function parseSendMessagePayload(input: unknown): { text: string; options: SendMessageOptionsDTO } | null {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    return null;
+  }
+
+  const candidate = input as Record<string, unknown>;
+
+  const topLevelText = typeof candidate.text === 'string' ? candidate.text : null;
+  const topLevelMessage = typeof candidate.message === 'string'
+    ? candidate.message
+    : null;
+  const nestedMessageContent = candidate.message && typeof candidate.message === 'object' && !Array.isArray(candidate.message)
+    ? (candidate.message as Record<string, unknown>).content
+    : null;
+  const nestedText = typeof nestedMessageContent === 'string' ? nestedMessageContent : null;
+
+  const text = topLevelText ?? topLevelMessage ?? nestedText;
+  if (!text || text.trim().length === 0) {
+    return null;
+  }
+
+  const options = parseSendMessageOptions(candidate.options);
+  if (!options) {
+    return null;
+  }
+
+  return {
+    text,
+    options,
+  };
 }
 
 function parseSingleQueryParam(value: string | string[] | undefined): string | undefined {
@@ -202,6 +298,35 @@ async function getSessionOrNull(sessionManager: MockSessionManager, sessionId: s
   return session ? cloneSession(session) : null;
 }
 
+function createUserMessage(sessionId: string, text: string, counter: number): MessageDTO {
+  const now = Date.now();
+
+  return {
+    id: `${sessionId}-user-${counter}`,
+    role: 'user',
+    content: text,
+    timestamp: now,
+    toolName: null,
+    toolUseId: null,
+    toolInput: null,
+    toolResult: null,
+    toolStatus: null,
+    isStreaming: false,
+    isPending: false,
+    isIntermediate: false,
+  };
+}
+
+function createMockTokenUsage(): TokenUsageDTO {
+  return {
+    inputTokens: 12,
+    outputTokens: 18,
+    totalTokens: 30,
+    contextTokens: 300,
+    costUsd: 0.0003,
+  };
+}
+
 export function createMockSessionManager(options: CreateMockSessionManagerOptions | WorkspaceDTO[] = {}): MockSessionManager {
   const normalizedOptions = Array.isArray(options)
     ? {
@@ -227,6 +352,8 @@ export function createMockSessionManager(options: CreateMockSessionManagerOption
   }
 
   let nextSessionCounter = sessionsById.size + 1;
+  let nextMessageCounter = 1;
+  let nextToolCounter = 1;
 
   const hooks = normalizedOptions.hooks;
 
@@ -275,6 +402,97 @@ export function createMockSessionManager(options: CreateMockSessionManagerOption
       sessionsById.set(session.id, cloneSession(session));
 
       return cloneSession(session);
+    },
+    async sendMessage(sessionId: string, text: string, options: SendMessageOptionsDTO) {
+      const session = sessionsById.get(sessionId);
+      if (!session) {
+        throw new Error(`Session ${sessionId} not found`);
+      }
+
+      hooks?.onSendMessage?.(sessionId, text, options);
+
+      const userMessage = createUserMessage(sessionId, text, nextMessageCounter);
+      nextMessageCounter += 1;
+
+      const toolUseId = `tool-${nextToolCounter}`;
+      nextToolCounter += 1;
+
+      const assistantText = `Simulated response for: ${text}`;
+      const tokenUsage = createMockTokenUsage();
+      const assistantTimestamp = Date.now();
+      const assistantMessage: MessageDTO = {
+        id: `${sessionId}-assistant-${nextMessageCounter}`,
+        role: 'assistant',
+        content: assistantText,
+        timestamp: assistantTimestamp,
+        toolName: null,
+        toolUseId: null,
+        toolInput: null,
+        toolResult: null,
+        toolStatus: null,
+        isStreaming: false,
+        isPending: false,
+        isIntermediate: false,
+      };
+      nextMessageCounter += 1;
+
+      const existingMessages = session.messages ? [...session.messages] : [];
+      existingMessages.push(userMessage, assistantMessage);
+
+      const updatedSession: MockSession = {
+        ...session,
+        messages: existingMessages,
+        lastMessageAt: assistantTimestamp,
+        preview: assistantText,
+        messageCount: existingMessages.length,
+        tokenUsage,
+      };
+
+      sessionsById.set(sessionId, updatedSession);
+
+      return {
+        status: MESSAGE_SEND_ACCEPTED_STATUS,
+        events: [
+          {
+            type: 'user_message',
+            sessionId,
+            message: userMessage,
+            status: 'accepted',
+            optimisticMessageId: options.optimisticMessageId,
+          },
+          {
+            type: 'text_delta',
+            sessionId,
+            delta: 'Simulated response ',
+          },
+          {
+            type: 'tool_start',
+            sessionId,
+            toolName: 'bash',
+            toolUseId,
+            toolInput: {
+              command: 'echo "ok"',
+            },
+          },
+          {
+            type: 'tool_result',
+            sessionId,
+            toolUseId,
+            toolName: 'bash',
+            result: 'ok',
+          },
+          {
+            type: 'text_complete',
+            sessionId,
+            text: assistantText,
+          },
+          {
+            type: 'complete',
+            sessionId,
+            tokenUsage,
+          },
+        ],
+      };
     },
     async deleteSession(sessionId: string) {
       if (!sessionsById.has(sessionId)) {
@@ -543,6 +761,58 @@ export function createTestServer(options: TestServerOptions = {}): GatewayServer
             ...sessionDto,
             hasMore: messagePage.hasMore,
             nextCursor: messagePage.nextCursor,
+          });
+        },
+      },
+      {
+        method: 'POST',
+        path: '/api/sessions/:sessionId/messages',
+        handler: async ({ req, params, parseJsonBody, error, json }) => {
+          const auth = requireAuth(req.headers.authorization);
+          if (!auth.authorized) {
+            error(401, 'unauthorized', 'Authorization required');
+            return;
+          }
+
+          const sessionId = params.sessionId;
+          if (!sessionId) {
+            error(404, 'session_not_found', 'Session not found');
+            return;
+          }
+
+          const session = await getSessionOrNull(sessionManager, sessionId);
+          if (!session) {
+            error(404, 'session_not_found', 'Session not found');
+            return;
+          }
+
+          const payload = await parseJsonBody<unknown>();
+          const sendMessagePayload = parseSendMessagePayload(payload);
+
+          if (!sendMessagePayload) {
+            error(400, 'invalid_request', 'Message text is required');
+            return;
+          }
+
+          sessionWorkspaceCache.set(sessionId, session.workspaceId);
+
+          const sendResult = await sessionManager.sendMessage(
+            sessionId,
+            sendMessagePayload.text,
+            sendMessagePayload.options
+          );
+
+          for (const rawEvent of sendResult.events) {
+            const serializedEvent = serializeSessionEvent(rawEvent);
+            if (!serializedEvent) {
+              continue;
+            }
+
+            await fanoutEvent(serializedEvent);
+          }
+
+          json(sendResult.status ?? MESSAGE_SEND_ACCEPTED_STATUS, {
+            status: 'accepted',
           });
         },
       },

@@ -15,8 +15,10 @@ export { createRouter, type HttpMethod, type RouteDefinition, type RouterMatchRe
 export { error, json, noContent } from './response-helpers.ts';
 export {
   paginateMessages,
+  serializeSessionEvent,
   serializeMessage,
   serializeSession,
+  type GatewaySessionEventLike,
   type GatewayMessageLike,
   type GatewaySessionLike,
   type PaginatedMessagesDTO,

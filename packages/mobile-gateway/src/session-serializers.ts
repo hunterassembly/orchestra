@@ -2,7 +2,9 @@ import type {
   CreateSessionOptionsDTO,
   MessageDTO,
   PermissionModeDTO,
+  SessionEventDTO,
   SessionDTO,
+  SessionUserMessageEventDTO,
   TokenUsageDTO,
 } from '@craft-agent/mobile-contracts';
 
@@ -40,6 +42,12 @@ export interface GatewaySessionLike {
   messageCount?: number;
   tokenUsage?: Partial<TokenUsageDTO> | null;
   messages?: GatewayMessageLike[];
+}
+
+export interface GatewaySessionEventLike {
+  type: string;
+  sessionId: string;
+  [key: string]: unknown;
 }
 
 export interface PaginatedMessagesDTO {
@@ -115,6 +123,14 @@ function sanitizePermissionMode(value: GatewaySessionLike['permissionMode']): Pe
   }
 
   return PERMISSION_MODES.has(value) ? value : null;
+}
+
+function sanitizeUserMessageStatus(value: unknown): SessionUserMessageEventDTO['status'] {
+  if (value === 'queued' || value === 'processing') {
+    return value;
+  }
+
+  return 'accepted';
 }
 
 export function serializeMessage(message: GatewayMessageLike): MessageDTO {
@@ -195,4 +211,98 @@ export function paginateMessages(
     hasMore,
     nextCursor: hasMore ? String(endIndex) : null,
   };
+}
+
+export function serializeSessionEvent(event: GatewaySessionEventLike): SessionEventDTO | null {
+  const sessionId = typeof event.sessionId === 'string' ? event.sessionId : '';
+  if (!sessionId) {
+    return null;
+  }
+
+  switch (event.type) {
+    case 'text_delta': {
+      const delta = typeof event.delta === 'string' ? event.delta : '';
+      return {
+        type: 'text_delta',
+        sessionId,
+        delta,
+      };
+    }
+
+    case 'text_complete': {
+      const text = typeof event.text === 'string' ? event.text : '';
+      return {
+        type: 'text_complete',
+        sessionId,
+        text,
+      };
+    }
+
+    case 'tool_start': {
+      const toolUseId = typeof event.toolUseId === 'string' ? event.toolUseId : '';
+      if (!toolUseId) {
+        return null;
+      }
+
+      const toolInputCandidate = event.toolInput;
+      const toolInput = toolInputCandidate && typeof toolInputCandidate === 'object' && !Array.isArray(toolInputCandidate)
+        ? (toolInputCandidate as Record<string, unknown>)
+        : {};
+
+      return {
+        type: 'tool_start',
+        sessionId,
+        toolName: typeof event.toolName === 'string' ? event.toolName : 'unknown',
+        toolUseId,
+        toolInput,
+      };
+    }
+
+    case 'tool_result': {
+      const toolUseId = typeof event.toolUseId === 'string' ? event.toolUseId : '';
+      if (!toolUseId) {
+        return null;
+      }
+
+      return {
+        type: 'tool_result',
+        sessionId,
+        toolUseId,
+        toolName: typeof event.toolName === 'string' ? event.toolName : 'unknown',
+        result: typeof event.result === 'string' ? event.result : '',
+        isError: event.isError === true ? true : undefined,
+      };
+    }
+
+    case 'complete': {
+      const tokenUsage = sanitizeTokenUsage((event.tokenUsage as Partial<TokenUsageDTO> | null | undefined) ?? null);
+      return {
+        type: 'complete',
+        sessionId,
+        tokenUsage: tokenUsage ?? undefined,
+      };
+    }
+
+    case 'user_message': {
+      const messageCandidate = event.message;
+      if (!messageCandidate || typeof messageCandidate !== 'object') {
+        return null;
+      }
+
+      const optimisticMessageId = typeof event.optimisticMessageId === 'string' && event.optimisticMessageId.length > 0
+        ? event.optimisticMessageId
+        : undefined;
+
+      return {
+        type: 'user_message',
+        sessionId,
+        message: serializeMessage(messageCandidate as GatewayMessageLike),
+        status: sanitizeUserMessageStatus(event.status),
+        optimisticMessageId,
+      };
+    }
+
+    default:
+      return null;
+  }
 }
