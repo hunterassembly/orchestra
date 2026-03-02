@@ -1895,6 +1895,8 @@ export function registerIpcHandlers(sessionManager: SessionManager, windowManage
         idToken: tokens.idToken,           // Store idToken separately
         refreshToken: tokens.refreshToken,
         expiresAt: tokens.expiresAt,
+        chatgptAccountId: tokens.chatgptAccountId,
+        chatgptPlanType: tokens.chatgptPlanType,
       })
 
       ipcLog.info('ChatGPT OAuth completed successfully')

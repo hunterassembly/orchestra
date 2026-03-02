@@ -37,6 +37,15 @@ export interface ChatGptTokens {
   refreshToken?: string;
   /** Token expiration timestamp (Unix ms) */
   expiresAt?: number;
+  /**
+   * ChatGPT account/workspace identifier extracted from access-token claims.
+   * Required by newer Codex app-server versions for `chatgptAuthTokens` login.
+   */
+  chatgptAccountId?: string;
+  /**
+   * Optional ChatGPT plan type extracted from access-token claims (for example "pro").
+   */
+  chatgptPlanType?: string | null;
 }
 
 export interface ChatGptOAuthState {
@@ -51,6 +60,59 @@ let currentOAuthState: ChatGptOAuthState | null = null;
 
 // Callback server instance
 let callbackServer: Server | null = null;
+
+export interface ChatGptAccessTokenMetadata {
+  chatgptAccountId: string;
+  chatgptPlanType: string | null;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+function decodeJwtPayload(token: string): Record<string, unknown> | null {
+  try {
+    const parts = token.split('.');
+    const encodedPayload = parts[1];
+    if (!encodedPayload) return null;
+    const payload = Buffer.from(encodedPayload.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8');
+    const parsed = JSON.parse(payload);
+    return isRecord(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Extract Codex-relevant metadata from a ChatGPT access token.
+ *
+ * The access token contains OpenAI namespaced claims where Codex expects:
+ * - `chatgpt_account_id` (required by newer app-server versions)
+ * - `chatgpt_plan_type` (optional)
+ */
+export function extractChatGptAccessTokenMetadata(accessToken: string): ChatGptAccessTokenMetadata | null {
+  const payload = decodeJwtPayload(accessToken);
+  if (!payload) return null;
+
+  const authClaims = isRecord(payload['https://api.openai.com/auth'])
+    ? payload['https://api.openai.com/auth']
+    : null;
+
+  const accountId =
+    (authClaims && typeof authClaims.chatgpt_account_id === 'string' ? authClaims.chatgpt_account_id : undefined) ??
+    (typeof payload.chatgpt_account_id === 'string' ? payload.chatgpt_account_id : undefined);
+
+  if (!accountId) return null;
+
+  const planTypeRaw =
+    (authClaims && typeof authClaims.chatgpt_plan_type === 'string' ? authClaims.chatgpt_plan_type : undefined) ??
+    (typeof payload.chatgpt_plan_type === 'string' ? payload.chatgpt_plan_type : undefined);
+
+  return {
+    chatgptAccountId: accountId,
+    chatgptPlanType: planTypeRaw ?? null,
+  };
+}
 
 /**
  * Generate a secure random state parameter
@@ -328,11 +390,15 @@ export async function exchangeChatGptCode(
 
     onStatus?.('Authentication successful!');
 
+    const metadata = extractChatGptAccessTokenMetadata(data.access_token);
+
     return {
       idToken: data.id_token,
       accessToken: data.access_token,
       refreshToken: data.refresh_token,
       expiresAt: data.expires_in ? Date.now() + data.expires_in * 1000 : undefined,
+      chatgptAccountId: metadata?.chatgptAccountId,
+      chatgptPlanType: metadata?.chatgptPlanType,
     };
   } catch (error) {
     clearOAuthState();
@@ -393,12 +459,16 @@ export async function refreshChatGptTokens(
 
     onStatus?.('Tokens refreshed successfully!');
 
+    const metadata = extractChatGptAccessTokenMetadata(data.access_token);
+
     return {
       idToken: data.id_token,
       accessToken: data.access_token,
       // Use new refresh token if provided, otherwise keep the old one
       refreshToken: data.refresh_token || refreshToken,
       expiresAt: data.expires_in ? Date.now() + data.expires_in * 1000 : undefined,
+      chatgptAccountId: metadata?.chatgptAccountId,
+      chatgptPlanType: metadata?.chatgptPlanType,
     };
   } catch (error) {
     if (error instanceof Error) {

@@ -485,6 +485,8 @@ export class PiAgent extends BaseAgent {
             idToken: newTokens.idToken,
             refreshToken: newTokens.refreshToken,
             expiresAt: newTokens.expiresAt,
+            chatgptAccountId: newTokens.chatgptAccountId,
+            chatgptPlanType: newTokens.chatgptPlanType,
           });
         }
         this.debug('Token refresh successful');

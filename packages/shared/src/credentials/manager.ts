@@ -312,6 +312,10 @@ export class CredentialManager {
     expiresAt?: number;
     /** OIDC id_token (used by OpenAI/Codex) */
     idToken?: string;
+    /** ChatGPT account/workspace ID extracted from OAuth access-token claims */
+    chatgptAccountId?: string;
+    /** ChatGPT plan type extracted from OAuth access-token claims */
+    chatgptPlanType?: string | null;
   } | null> {
     const cred = await this.get({ type: 'llm_oauth', connectionSlug });
     if (!cred) return null;
@@ -320,6 +324,8 @@ export class CredentialManager {
       refreshToken: cred.refreshToken,
       expiresAt: cred.expiresAt,
       idToken: cred.idToken,
+      chatgptAccountId: cred.chatgptAccountId,
+      chatgptPlanType: cred.chatgptPlanType,
     };
   }
 
@@ -334,12 +340,18 @@ export class CredentialManager {
     expiresAt?: number;
     /** OIDC id_token (used by OpenAI/Codex) */
     idToken?: string;
+    /** ChatGPT account/workspace ID extracted from OAuth access-token claims */
+    chatgptAccountId?: string;
+    /** ChatGPT plan type extracted from OAuth access-token claims */
+    chatgptPlanType?: string | null;
   }): Promise<void> {
     await this.set({ type: 'llm_oauth', connectionSlug }, {
       value: credentials.accessToken,
       refreshToken: credentials.refreshToken,
       expiresAt: credentials.expiresAt,
       idToken: credentials.idToken,
+      chatgptAccountId: credentials.chatgptAccountId,
+      chatgptPlanType: credentials.chatgptPlanType,
     });
   }
 

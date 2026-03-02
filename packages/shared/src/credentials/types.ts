@@ -101,6 +101,10 @@ export interface StoredCredential {
    * The `value` field stores access_token, this field stores id_token.
    */
   idToken?: string;
+  /** ChatGPT account/workspace ID extracted from OAuth access-token claims */
+  chatgptAccountId?: string;
+  /** ChatGPT plan type extracted from OAuth access-token claims */
+  chatgptPlanType?: string | null;
 
   // --- AWS IAM credentials (for llm_iam type) ---
 
