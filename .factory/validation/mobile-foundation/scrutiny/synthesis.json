@@ -1,12 +1,13 @@
 {
   "milestone": "mobile-foundation",
-  "round": 1,
-  "status": "fail",
+  "round": 2,
+  "status": "pass",
   "validatorsRun": {
     "test": {
       "passed": true,
       "command": "cd packages/mobile-tokens && bun test; cd packages/mobile-contracts && bun test; cd packages/mobile-gateway && bun test; cd apps/mobile && npx jest --maxWorkers=8",
-      "exitCode": 0
+      "exitCode": 0,
+      "details": "mobile-tokens: 8/8 pass, mobile-contracts: 3/3 pass, mobile-gateway: 65/65 pass, mobile-app: 63/63 pass (9 suites)"
     },
     "typecheck": {
       "passed": true,
@@ -20,28 +21,18 @@
     }
   },
   "reviewsSummary": {
-    "total": 7,
-    "passed": 6,
-    "failed": 1,
-    "failedFeatures": ["mobile-stores-event-processor"]
+    "total": 1,
+    "passed": 1,
+    "failed": 0,
+    "failedFeatures": []
   },
-  "blockingIssues": [
-    {
-      "featureId": "mobile-stores-event-processor",
-      "severity": "blocking",
-      "description": "tool_result event handler in apps/mobile/src/state/event-processor.ts (line 354) ignores SessionToolResultEventDTO.isError — always sets toolStatus to 'completed'. Failed tool executions cannot be represented correctly. Fix: use `event.isError ? 'error' : 'completed'` for toolStatus in both the update and push branches. ToolStatusDTO already supports 'error'. Update tests to cover tool error case."
-    }
-  ],
+  "blockingIssues": [],
   "nonBlockingIssues": [
     {
       "featureId": "mobile-stores-event-processor",
       "severity": "non_blocking",
-      "description": "text_complete overwrites existing completed intermediate assistant messages for the same turnId instead of creating a new message. Desktop semantics preserve intermediate (thinking) segments. Low risk for MVP but will cause parity divergence for conversations with intermediate assistant messages."
-    },
-    {
-      "featureId": "mobile-tokens-package",
-      "severity": "non_blocking",
-      "description": "mobile-tokens imports DEFAULT_THEME via relative path from packages/shared without declaring @craft-agent/shared as a workspace dependency in package.json. Works due to monorepo hoisting but violates workspace dependency conventions and reduces portability."
+      "description": "text_complete overwrites existing completed intermediate assistant messages for the same turnId instead of creating a new message. Desktop semantics preserve intermediate (thinking) segments. Low risk for MVP but will cause parity divergence for conversations with intermediate assistant messages.",
+      "carriedFromRound": 1
     }
   ],
   "appliedUpdates": [],
@@ -50,20 +41,19 @@
       "target": "AGENTS.md",
       "suggestion": "Add convention: Mobile app tests must live under src/__tests__/ (not colocated with source) because apps/mobile/tsconfig.json excludes src/__tests__/ from compilation. Colocated .test.ts files will cause tsc --noEmit failures.",
       "evidence": "Features mobile-api-client and mobile-connection-state both encountered tsc failures from colocated tests. The api-client worker moved tests to src/__tests__/ to fix it. The connection-state worker placed tests at src/state/connection.test.ts (colocated) but tsconfig excludes were later broadened. Multiple reviewers flagged this inconsistency.",
-      "isSystemic": true
+      "isSystemic": true,
+      "carriedFromRound": 1,
+      "status": "Already applied to AGENTS.md by orchestrator between rounds"
     },
     {
       "target": "AGENTS.md",
       "suggestion": "Add convention: New packages in the monorepo should declare workspace dependencies explicitly (e.g., @craft-agent/shared: 'workspace:*') rather than relying on relative path imports across package boundaries.",
-      "evidence": "mobile-tokens-package imports from packages/shared via relative path without declaring the dependency, bypassing workspace resolution. Flagged by reviewer for mobile-tokens-package.",
-      "isSystemic": false
+      "evidence": "mobile-tokens-package imports from packages/shared via relative path without declaring the dependency, bypassing workspace resolution. Flagged by reviewer for mobile-tokens-package. Fix feature fix-event-processor-tool-error addressed this by adding @craft-agent/shared as explicit workspace dependency.",
+      "isSystemic": false,
+      "carriedFromRound": 1,
+      "status": "Fixed by fix-event-processor-tool-error (workspace dep now declared)"
     }
   ],
-  "rejectedObservations": [
-    {
-      "observation": "Skill mandates tests live under __tests__, but existing packages use colocated tests (src/index.test.ts).",
-      "reason": "This is about bun test packages (contracts, tokens) which have no tsconfig exclusion issues. The __tests__ mandate is specifically relevant for the mobile app (Jest + tsc). The skill guidance is correct for the mobile app context but not applicable to bun test packages. No change needed — the distinction is already implicit."
-    }
-  ],
-  "previousRound": null
+  "rejectedObservations": [],
+  "previousRound": ".factory/validation/mobile-foundation/scrutiny/synthesis.json (round 1)"
 }
