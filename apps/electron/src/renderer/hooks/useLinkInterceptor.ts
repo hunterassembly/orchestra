@@ -62,6 +62,12 @@ interface TextPreview {
   error?: string
 }
 
+interface DiffPreview {
+  type: 'diff'
+  filePath: string
+  unifiedDiff: string
+}
+
 export type FilePreviewState =
   | ImagePreview
   | PDFPreview
@@ -69,6 +75,7 @@ export type FilePreviewState =
   | MarkdownPreview
   | JSONPreview
   | TextPreview
+  | DiffPreview
 
 // ── Hook options ───────────────────────────────────────────────────────────────
 // Callbacks injected by App.tsx so the hook doesn't depend on window.electronAPI directly.
@@ -109,6 +116,8 @@ interface LinkInterceptorResult {
   readFileDataUrl: (path: string) => Promise<string>
   /** Read file as binary — passed to PDF overlays for react-pdf */
   readFileBinary: (path: string) => Promise<Uint8Array>
+  /** Show a diff preview overlay for a file */
+  showDiffPreview: (filePath: string, unifiedDiff: string) => void
 }
 
 // ── Hook implementation ────────────────────────────────────────────────────────
@@ -208,6 +217,11 @@ export function useLinkInterceptor(options: LinkInterceptorOptions): LinkInterce
     return optionsRef.current.readFileBinary(path)
   }, []) // Stable: uses optionsRef
 
+  /** Show a diff preview overlay for a file */
+  const showDiffPreview = useCallback((filePath: string, unifiedDiff: string) => {
+    setPreviewState({ type: 'diff', filePath, unifiedDiff })
+  }, [])
+
   return {
     handleOpenFile,
     handleOpenUrl,
@@ -218,6 +232,7 @@ export function useLinkInterceptor(options: LinkInterceptorOptions): LinkInterce
     revealCurrentInFinder,
     readFileDataUrl,
     readFileBinary,
+    showDiffPreview,
   }
 }
 

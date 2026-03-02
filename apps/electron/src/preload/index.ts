@@ -253,6 +253,16 @@ const api: ElectronAPI = {
     return () => ipcRenderer.removeListener(IPC_CHANNELS.SESSION_FILES_CHANGED, handler)
   },
 
+  // Workspace File Tree
+  getWorkspaceFiles: (rootPath: string) => ipcRenderer.invoke(IPC_CHANNELS.GET_WORKSPACE_FILES, rootPath),
+  watchWorkspaceFiles: (rootPath: string) => ipcRenderer.invoke(IPC_CHANNELS.WATCH_WORKSPACE_FILES, rootPath),
+  unwatchWorkspaceFiles: () => ipcRenderer.invoke(IPC_CHANNELS.UNWATCH_WORKSPACE_FILES),
+  onWorkspaceFilesChanged: (callback: (rootPath: string) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, rootPath: string) => callback(rootPath)
+    ipcRenderer.on(IPC_CHANNELS.WORKSPACE_FILES_CHANGED, handler)
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.WORKSPACE_FILES_CHANGED, handler)
+  },
+
   // Sources
   getSources: (workspaceId: string) => ipcRenderer.invoke(IPC_CHANNELS.SOURCES_GET, workspaceId),
   createSource: (workspaceId: string, config: Partial<import('@craft-agent/shared/sources').FolderSourceConfig>) =>
@@ -504,6 +514,10 @@ const api: ElectronAPI = {
   },
   getGitBranch: (dirPath: string) =>
     ipcRenderer.invoke(IPC_CHANNELS.GET_GIT_BRANCH, dirPath),
+  getGitStatus: (dirPath: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.GET_GIT_STATUS, dirPath),
+  getGitDiff: (dirPath: string, filePath: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.GET_GIT_DIFF, dirPath, filePath),
 
   // Git Bash (Windows)
   checkGitBash: () => ipcRenderer.invoke(IPC_CHANNELS.GITBASH_CHECK),

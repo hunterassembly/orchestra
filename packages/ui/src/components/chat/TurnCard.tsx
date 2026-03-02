@@ -271,6 +271,8 @@ export interface TurnCardProps {
   animateResponse?: boolean
   /** Hide footers for compact embedding (EditPopover) */
   compactMode?: boolean
+  /** When provided, the fullscreen button delegates to this callback instead of using internal overlay */
+  onExpandFullscreen?: (text: string, variant?: 'response' | 'plan') => void
 }
 
 // ============================================================================
@@ -1306,6 +1308,8 @@ export interface ResponseCardProps {
   showAcceptPlan?: boolean
   /** Hide footer for compact embedding (EditPopover) */
   compactMode?: boolean
+  /** When provided, the fullscreen button delegates to this callback instead of using internal overlay */
+  onExpandFullscreen?: (text: string, variant?: 'response' | 'plan') => void
 }
 
 const MAX_HEIGHT = 540
@@ -1339,6 +1343,7 @@ export function ResponseCard({
   isLastResponse = true,
   showAcceptPlan = true,
   compactMode = false,
+  onExpandFullscreen,
 }: ResponseCardProps) {
   // Throttled content for display - updates every CONTENT_THROTTLE_MS during streaming
   const [displayedText, setDisplayedText] = useState(text)
@@ -1421,7 +1426,7 @@ export function ResponseCard({
         <div className="bg-background shadow-minimal rounded-[8px] overflow-hidden relative group">
           {/* Fullscreen button - top right corner, visible on hover */}
           <button
-            onClick={() => setIsFullscreen(true)}
+            onClick={() => onExpandFullscreen ? onExpandFullscreen(text, isPlan ? 'plan' : 'response') : setIsFullscreen(true)}
             className={cn(
               "absolute top-2 right-2 p-1 rounded-[6px] transition-all z-10 select-none",
               "opacity-0 group-hover:opacity-100",
@@ -1704,6 +1709,7 @@ export const TurnCard = React.memo(function TurnCard({
   displayMode = 'detailed',
   animateResponse = false,
   compactMode = false,
+  onExpandFullscreen,
 }: TurnCardProps) {
   // Derive the turn phase from props using the state machine.
   // This provides a single source of truth for lifecycle state,
@@ -2054,6 +2060,7 @@ export const TurnCard = React.memo(function TurnCard({
             onAcceptWithCompact={onAcceptPlanWithCompact}
             isLastResponse={isLastResponse && index === planActivities.length - 1}
             compactMode={compactMode}
+            onExpandFullscreen={onExpandFullscreen}
           />
         </div>
       ))}
@@ -2081,6 +2088,7 @@ export const TurnCard = React.memo(function TurnCard({
                 onAcceptWithCompact={onAcceptPlanWithCompact}
                 isLastResponse={isLastResponse}
                 compactMode={compactMode}
+                onExpandFullscreen={onExpandFullscreen}
               />
             </motion.div>
           )}
@@ -2101,6 +2109,7 @@ export const TurnCard = React.memo(function TurnCard({
             onAcceptWithCompact={onAcceptPlanWithCompact}
             isLastResponse={isLastResponse}
             compactMode={compactMode}
+            onExpandFullscreen={onExpandFullscreen}
           />
         </div>
       )}

@@ -8,8 +8,13 @@
 import * as React from 'react'
 import { useAtomValue, useSetAtom } from 'jotai'
 import { AlertCircle, Globe, Copy, RefreshCw, Link2Off, Info } from 'lucide-react'
-import { ChatDisplay, type ChatDisplayHandle } from '@/components/app-shell/ChatDisplay'
-import { PanelHeader } from '@/components/app-shell/PanelHeader'
+import { ChatDisplay, type ChatDisplayHandle, type ChatOverlayState } from '@/components/app-shell/ChatDisplay'
+import { ChatMetadataBar } from '@/components/app-shell/ChatMetadataBar'
+import { ChatTabBar } from '@/components/app-shell/ChatTabBar'
+import { TabContentRenderer } from '@/components/app-shell/TabContentRenderer'
+import { useChatTabs } from '@/hooks/useChatTabs'
+import { classifyFile } from '@craft-agent/ui'
+import { getLanguageFromPath } from '@/lib/file-utils'
 import { SessionMenu } from '@/components/app-shell/SessionMenu'
 import { RenameDialog } from '@/components/ui/rename-dialog'
 import { toast } from 'sonner'
@@ -67,6 +72,7 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
     sessionListSearchQuery,
     isSearchModeActive,
     chatDisplayRef,
+    openFileAsTabRef,
     onChatMatchInfoChange,
   } = useAppShellContext()
 
@@ -224,25 +230,84 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
     await window.electronAPI.sessionCommand(session.id, { type: 'updateWorkingDirectory', dir: path })
   }, [session])
 
-  const handleOpenFile = React.useCallback(
-    (path: string) => {
-      // Resolve bare relative paths against the session working directory
-      const resolved = (path.startsWith('/') || path.startsWith('~/'))
-        ? path
-        : workingDirectory
-          ? `${workingDirectory}/${path}`
-          : path
-      onOpenFile(resolved)
-    },
-    [onOpenFile, workingDirectory]
-  )
-
   const handleOpenUrl = React.useCallback(
     (url: string) => {
       onOpenUrl(url)
     },
     [onOpenUrl]
   )
+
+  // Get display title early — needed by useChatTabs
+  const displayTitle = session ? getSessionTitle(session) : (sessionMeta ? getSessionTitle(sessionMeta) : 'Session')
+
+  // Tab system
+  const chatTabs = useChatTabs(sessionId, displayTitle)
+
+  // File open → create tab (instead of going to useLinkInterceptor overlay)
+  const handleOpenFileAsTab = React.useCallback(
+    async (path: string) => {
+      // Resolve relative paths
+      const resolved = (path.startsWith('/') || path.startsWith('~/'))
+        ? path
+        : workingDirectory
+          ? `${workingDirectory}/${path}`
+          : path
+
+      const classification = classifyFile(resolved)
+
+      if (!classification.canPreview || !classification.type) {
+        // Not previewable — open externally
+        window.electronAPI.openFile(resolved)
+        return
+      }
+
+      const type = classification.type
+
+      // Image/PDF — set state immediately, overlay handles loading
+      if (type === 'image') {
+        chatTabs.openFileTab({ type: 'image', filePath: resolved })
+        return
+      }
+      if (type === 'pdf') {
+        chatTabs.openFileTab({ type: 'pdf', filePath: resolved })
+        return
+      }
+
+      // Text-based files — read content first
+      try {
+        const content = await window.electronAPI.readFile(resolved)
+        if (type === 'code') {
+          chatTabs.openFileTab({ type: 'code', filePath: resolved, content, language: getLanguageFromPath(resolved) })
+        } else if (type === 'markdown') {
+          chatTabs.openFileTab({ type: 'markdown', filePath: resolved, content })
+        } else if (type === 'json') {
+          chatTabs.openFileTab({ type: 'json', filePath: resolved, content })
+        } else {
+          chatTabs.openFileTab({ type: 'text', filePath: resolved, content })
+        }
+      } catch (err) {
+        const errorMsg = err instanceof Error ? err.message : 'Failed to read file'
+        chatTabs.openFileTab({ type: 'text', filePath: resolved, content: '', error: errorMsg })
+      }
+    },
+    [workingDirectory, chatTabs],
+  )
+
+  // Turn expansion → create tab (instead of overlay in ChatDisplay)
+  const handleOpenTurnAsTab = React.useCallback(
+    (overlay: ChatOverlayState, label: string) => {
+      chatTabs.openTurnTab(overlay, label)
+    },
+    [chatTabs],
+  )
+
+  // Register tab handler so sidebar can open files as tabs
+  React.useEffect(() => {
+    if (openFileAsTabRef) {
+      openFileAsTabRef.current = handleOpenFileAsTab
+      return () => { openFileAsTabRef.current = null }
+    }
+  }, [openFileAsTabRef, handleOpenFileAsTab])
 
   // Perf: Mark when data is ready
   const dataReadyMarkedRef = React.useRef<string | null>(null)
@@ -263,9 +328,6 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
     }
   }, [sessionId, session])
 
-  // Get display title for header - use getSessionTitle for consistent fallback logic with SessionList
-  // Priority: name > first user message > preview > "New chat"
-  const displayTitle = session ? getSessionTitle(session) : (sessionMeta ? getSessionTitle(sessionMeta) : 'Session')
   const isFlagged = session?.isFlagged || sessionMeta?.isFlagged || false
   const isArchived = session?.isArchived || sessionMeta?.isArchived || false
   const sharedUrl = session?.sharedUrl || sessionMeta?.sharedUrl || null
@@ -495,14 +557,25 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
       return (
         <>
           <div className="h-full flex flex-col">
-            <PanelHeader  title={displayTitle} titleMenu={titleMenu} actions={shareButton} rightSidebarButton={rightSidebarButton} isRegeneratingTitle={isAsyncOperationOngoing} />
+            <ChatMetadataBar
+              workingDirectory={sessionMeta.workingDirectory}
+              sessionMenu={shareButton}
+              rightSidebarButton={rightSidebarButton}
+            />
+            <ChatTabBar
+              tabs={chatTabs.tabs}
+              activeTabId={chatTabs.activeTabId}
+              onActivate={chatTabs.activateTab}
+              onClose={chatTabs.closeTab}
+            />
             <div className="flex-1 flex flex-col min-h-0">
               <ChatDisplay
                 ref={chatDisplayRef}
                 session={skeletonSession}
                 onSendMessage={() => {}}
-                onOpenFile={handleOpenFile}
+                onOpenFile={handleOpenFileAsTab}
                 onOpenUrl={handleOpenUrl}
+                onOpenTurnAsTab={handleOpenTurnAsTab}
                 currentModel={effectiveModel}
                 onModelChange={handleModelChange}
                 onConnectionChange={handleConnectionChange}
@@ -552,7 +625,7 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
     // Session truly doesn't exist
     return (
       <div className="h-full flex flex-col">
-        <PanelHeader  title="Session" rightSidebarButton={rightSidebarButton} />
+        <ChatMetadataBar rightSidebarButton={rightSidebarButton} />
         <div className="flex-1 flex flex-col items-center justify-center gap-3 text-muted-foreground">
           <AlertCircle className="h-10 w-10" />
           <p className="text-sm">This session no longer exists</p>
@@ -564,52 +637,84 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
   return (
     <>
       <div className="h-full flex flex-col">
-        <PanelHeader  title={displayTitle} titleMenu={titleMenu} actions={shareButton} rightSidebarButton={rightSidebarButton} isRegeneratingTitle={isAsyncOperationOngoing} />
+        {/* Row 1: metadata bar (branch, folder, cost) */}
+        <ChatMetadataBar
+          workingDirectory={workingDirectory}
+          costUsd={session.tokenUsage?.costUsd}
+          sessionMenu={shareButton}
+          rightSidebarButton={rightSidebarButton}
+        />
+        {/* Row 2: tab bar */}
+        <ChatTabBar
+          tabs={chatTabs.tabs}
+          activeTabId={chatTabs.activeTabId}
+          onActivate={chatTabs.activateTab}
+          onClose={chatTabs.closeTab}
+        />
+        {/* Content area */}
         <div className="flex-1 flex flex-col min-h-0">
-          <ChatDisplay
-            ref={chatDisplayRef}
-            session={session}
-            onSendMessage={(message, attachments, skillSlugs) => {
-              if (session) {
-                onSendMessage(session.id, message, attachments, skillSlugs)
-              }
-            }}
-            onOpenFile={handleOpenFile}
-            onOpenUrl={handleOpenUrl}
-            currentModel={effectiveModel}
-            onModelChange={handleModelChange}
-            onConnectionChange={handleConnectionChange}
-            textareaRef={textareaRef}
-            pendingPermission={pendingPermission}
-            onRespondToPermission={onRespondToPermission}
-            pendingCredential={pendingCredential}
-            onRespondToCredential={onRespondToCredential}
-            thinkingLevel={sessionOpts.thinkingLevel}
-            onThinkingLevelChange={(level) => setOption('thinkingLevel', level)}
-            ultrathinkEnabled={sessionOpts.ultrathinkEnabled}
-            onUltrathinkChange={(enabled) => setOption('ultrathinkEnabled', enabled)}
-            permissionMode={sessionOpts.permissionMode}
-            onPermissionModeChange={setPermissionMode}
-            enabledModes={enabledModes}
-            inputValue={inputValue}
-            onInputChange={handleInputChange}
-            sources={enabledSources}
-            skills={skills}
-            labels={labels}
-            onLabelsChange={(newLabels) => onSessionLabelsChange?.(sessionId, newLabels)}
-            sessionStatuses={sessionStatuses}
-            onSessionStatusChange={handleSessionStatusChange}
-            workspaceId={activeWorkspaceId || undefined}
-            onSourcesChange={(slugs) => onSessionSourcesChange?.(sessionId, slugs)}
-            workingDirectory={workingDirectory}
-            onWorkingDirectoryChange={handleWorkingDirectoryChange}
-            sessionFolderPath={session?.sessionFolderPath}
-            messagesLoading={!messagesLoaded}
-            searchQuery={sessionListSearchQuery}
-            isSearchModeActive={isSearchModeActive}
-            onMatchInfoChange={onChatMatchInfoChange}
-            connectionUnavailable={connectionUnavailable}
-          />
+          {/* Chat — stays mounted via display toggle */}
+          <div
+            className="flex-1 flex flex-col min-h-0"
+            style={{ display: chatTabs.isChatActive ? 'flex' : 'none' }}
+          >
+            <ChatDisplay
+              ref={chatDisplayRef}
+              session={session}
+              onSendMessage={(message, attachments, skillSlugs) => {
+                if (session) {
+                  onSendMessage(session.id, message, attachments, skillSlugs)
+                }
+              }}
+              onOpenFile={handleOpenFileAsTab}
+              onOpenUrl={handleOpenUrl}
+              onOpenTurnAsTab={handleOpenTurnAsTab}
+              currentModel={effectiveModel}
+              onModelChange={handleModelChange}
+              onConnectionChange={handleConnectionChange}
+              textareaRef={textareaRef}
+              pendingPermission={pendingPermission}
+              onRespondToPermission={onRespondToPermission}
+              pendingCredential={pendingCredential}
+              onRespondToCredential={onRespondToCredential}
+              thinkingLevel={sessionOpts.thinkingLevel}
+              onThinkingLevelChange={(level) => setOption('thinkingLevel', level)}
+              ultrathinkEnabled={sessionOpts.ultrathinkEnabled}
+              onUltrathinkChange={(enabled) => setOption('ultrathinkEnabled', enabled)}
+              permissionMode={sessionOpts.permissionMode}
+              onPermissionModeChange={setPermissionMode}
+              enabledModes={enabledModes}
+              inputValue={inputValue}
+              onInputChange={handleInputChange}
+              sources={enabledSources}
+              skills={skills}
+              labels={labels}
+              onLabelsChange={(newLabels) => onSessionLabelsChange?.(sessionId, newLabels)}
+              sessionStatuses={sessionStatuses}
+              onSessionStatusChange={handleSessionStatusChange}
+              workspaceId={activeWorkspaceId || undefined}
+              onSourcesChange={(slugs) => onSessionSourcesChange?.(sessionId, slugs)}
+              workingDirectory={workingDirectory}
+              onWorkingDirectoryChange={handleWorkingDirectoryChange}
+              sessionFolderPath={session?.sessionFolderPath}
+              messagesLoading={!messagesLoaded}
+              searchQuery={sessionListSearchQuery}
+              isSearchModeActive={isSearchModeActive}
+              onMatchInfoChange={onChatMatchInfoChange}
+              connectionUnavailable={connectionUnavailable}
+            />
+          </div>
+          {/* Non-chat tab content */}
+          {!chatTabs.isChatActive && chatTabs.activeTab && (
+            <TabContentRenderer
+              tab={chatTabs.activeTab}
+              onClose={() => chatTabs.closeTab(chatTabs.activeTabId)}
+              readFileDataUrl={(path) => window.electronAPI.readFileDataUrl(path)}
+              readFileBinary={(path) => window.electronAPI.readFileBinary(path)}
+              onOpenFile={handleOpenFileAsTab}
+              onOpenUrl={handleOpenUrl}
+            />
+          )}
         </div>
       </div>
       <RenameDialog

@@ -99,7 +99,10 @@ export interface AppShellContextType {
 
   // File/URL handlers - these can open in tabs or external apps
   onOpenFile: (path: string) => void
+  /** Ref to the active chat's file-as-tab handler (set by ChatPage, used by sidebar) */
+  openFileAsTabRef?: React.MutableRefObject<((path: string) => void) | null>
   onOpenUrl: (url: string) => void
+  onOpenDiff: (filePath: string, unifiedDiff: string) => void
 
   // Workspace
   onSelectWorkspace: (id: string, openInNewWindow?: boolean) => void

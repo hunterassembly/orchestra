@@ -675,6 +675,8 @@ function AppShellContent({
 
   // Ref for ChatDisplay navigation (exposed via forwardRef)
   const chatDisplayRef = React.useRef<ChatDisplayHandle>(null)
+  // Ref for opening files as tabs in the active chat (set by ChatPage)
+  const openFileAsTabRef = React.useRef<((path: string) => void) | null>(null)
   // Track match count and index from ChatDisplay (for SessionList navigation UI)
   const [chatMatchInfo, setChatMatchInfo] = React.useState<{ count: number; index: number }>({ count: 0, index: 0 })
 
@@ -1506,6 +1508,7 @@ function AppShellContent({
     sessionListSearchQuery: searchActive ? searchQuery : undefined,
     isSearchModeActive: searchActive,
     chatDisplayRef,
+    openFileAsTabRef,
     onChatMatchInfoChange: handleChatMatchInfoChange,
     onTestAutomation: handleTestAutomation,
     onToggleAutomation: handleToggleAutomation,
@@ -3300,7 +3303,7 @@ function AppShellContent({
                   style={{ width: rightSidebarWidth }}
                 >
                   <RightSidebar
-                    panel={{ type: 'sessionMetadata' }}
+                    panel={{ type: 'files' }}
                     sessionId={isSessionsNavigation(navState) && navState.details ? navState.details.sessionId : undefined}
                     closeButton={rightSidebarCloseButton}
                   />
@@ -3333,7 +3336,7 @@ function AppShellContent({
                   >
                     <div className="h-full bg-foreground-2 overflow-hidden shadow-strong rounded-[12px]">
                       <RightSidebar
-                        panel={{ type: 'sessionMetadata' }}
+                        panel={{ type: 'files' }}
                         sessionId={isSessionsNavigation(navState) && navState.details ? navState.details.sessionId : undefined}
                         closeButton={rightSidebarCloseButton}
                       />

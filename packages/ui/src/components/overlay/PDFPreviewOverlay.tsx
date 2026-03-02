@@ -38,6 +38,8 @@ export interface PDFPreviewOverlayProps {
   /** Async loader that returns PDF data as Uint8Array */
   loadPdfData: (path: string) => Promise<Uint8Array>
   theme?: 'light' | 'dark'
+  /** Render inline (no dialog/portal) — for embedding in tab content */
+  embedded?: boolean
 }
 
 export function PDFPreviewOverlay({
@@ -48,6 +50,7 @@ export function PDFPreviewOverlay({
   initialIndex = 0,
   loadPdfData,
   theme = 'light',
+  embedded = false,
 }: PDFPreviewOverlayProps) {
   // Normalize: items array or single filePath
   const resolvedItems = useMemo<PreviewItem[]>(() => {
@@ -132,6 +135,7 @@ export function PDFPreviewOverlay({
       filePath={activeItem?.src || filePath}
       error={error ? { label: 'Load Failed', message: error } : undefined}
       headerActions={headerActions}
+      embedded={embedded}
     >
       <div className="h-full flex flex-col items-center overflow-auto">
         {isLoading && (

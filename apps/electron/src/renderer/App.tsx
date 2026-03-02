@@ -51,7 +51,11 @@ import {
   CodePreviewOverlay,
   DocumentFormattedMarkdownOverlay,
   JSONPreviewOverlay,
+  PreviewOverlay,
+  ContentFrame,
+  UnifiedDiffViewer,
 } from '@craft-agent/ui'
+import { GitCompareArrows } from 'lucide-react'
 import { useLinkInterceptor, type FilePreviewState } from '@/hooks/useLinkInterceptor'
 import { getFileManagerName } from '@/lib/platform'
 import { ActionRegistryProvider } from '@/actions'
@@ -1305,6 +1309,7 @@ export default function App() {
     // File/URL handlers
     onOpenFile: handleOpenFile,
     onOpenUrl: handleOpenUrl,
+    onOpenDiff: linkInterceptor.showDiffPreview,
     // Workspace
     onSelectWorkspace: handleSelectWorkspace,
     onRefreshWorkspaces: handleRefreshWorkspaces,
@@ -1624,6 +1629,31 @@ function FilePreviewRenderer({
         />
       )
     }
+
+    case 'diff':
+      return (
+        <PreviewOverlay
+          isOpen
+          onClose={onClose}
+          theme={theme}
+          typeBadge={{
+            icon: GitCompareArrows,
+            label: 'Diff',
+            variant: 'amber' as const,
+          }}
+          filePath={state.filePath}
+          className="bg-foreground-3"
+        >
+          <ContentFrame title="Changes" fitContent minWidth={850}>
+            <UnifiedDiffViewer
+              unifiedDiff={state.unifiedDiff}
+              filePath={state.filePath}
+              theme={theme}
+              disableFileHeader={false}
+            />
+          </ContentFrame>
+        </PreviewOverlay>
+      )
 
     default:
       return null
