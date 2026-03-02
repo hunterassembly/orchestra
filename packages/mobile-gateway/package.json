@@ -1,0 +1,23 @@
+{
+  "name": "@craft-agent/mobile-gateway",
+  "version": "0.0.0",
+  "license": "Apache-2.0",
+  "description": "Standalone mobile gateway HTTP server for Orchestra",
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "bun test",
+    "tsc": "tsc"
+  },
+  "dependencies": {
+    "@craft-agent/mobile-contracts": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.0.0"
+  }
+}
