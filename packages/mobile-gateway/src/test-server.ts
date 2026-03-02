@@ -1,12 +1,16 @@
 import type { ServerResponse } from 'node:http';
+import { randomInt, randomUUID } from 'node:crypto';
 import type {
   CreateSessionOptionsDTO,
   MessageDTO,
+  PairingConfirmResponse,
+  PairingStartResponse,
   PermissionModeDTO,
   SessionCommandDTO,
   SessionStatusDTO,
   SendMessageOptionsDTO,
   SessionEventDTO,
+  TokenRefreshResponse,
   TokenUsageDTO,
   WorkspaceDTO,
 } from '@craft-agent/mobile-contracts';
@@ -75,14 +79,40 @@ export interface TestServerOptions {
   version?: string;
   sessionManager?: MockSessionManager;
   sseHeartbeatIntervalMs?: number;
+  pairingCodeTtlMs?: number;
+  accessTokenTtlMs?: number;
+  refreshTokenTtlMs?: number;
 }
 
 const DEFAULT_PORT = 7842;
 const DEFAULT_HOST = '127.0.0.1';
 const DEFAULT_VERSION = '0.0.0';
 const DEFAULT_SSE_HEARTBEAT_INTERVAL_MS = 30_000;
+const DEFAULT_PAIRING_CODE_TTL_MS = 5 * 60_000;
+const DEFAULT_ACCESS_TOKEN_TTL_MS = 15 * 60_000;
+const DEFAULT_REFRESH_TOKEN_TTL_MS = 30 * 24 * 60 * 60_000;
 const VALID_PERMISSION_MODES: PermissionModeDTO[] = ['safe', 'ask', 'allow-all'];
 const MESSAGE_SEND_ACCEPTED_STATUS = 202;
+const LEGACY_TEST_ACCESS_TOKEN = 'test-token';
+
+interface PairingCodeRecord {
+  code: string;
+  expiresAt: number;
+}
+
+interface AccessTokenRecord {
+  deviceId: string;
+  expiresAt: number;
+}
+
+interface RefreshTokenRecord {
+  deviceId: string;
+  expiresAt: number;
+}
+
+type AuthResult =
+  | { authorized: true; accessToken: string; deviceId: string }
+  | { authorized: false; status: number; code: string; message: string };
 
 function createDefaultSeededSessions(workspaceId: string): MockSession[] {
   return [
@@ -308,6 +338,41 @@ function parseSessionCommand(input: unknown):
   }
 }
 
+function parsePairConfirmPayload(input: unknown): { pairingId: string; code: string } | null {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    return null;
+  }
+
+  const candidate = input as Record<string, unknown>;
+  if (typeof candidate.pairingId !== 'string' || candidate.pairingId.trim().length === 0) {
+    return null;
+  }
+
+  if (typeof candidate.code !== 'string' || candidate.code.trim().length === 0) {
+    return null;
+  }
+
+  return {
+    pairingId: candidate.pairingId,
+    code: candidate.code,
+  };
+}
+
+function parseTokenRefreshPayload(input: unknown): { refreshToken: string } | null {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    return null;
+  }
+
+  const candidate = input as Record<string, unknown>;
+  if (typeof candidate.refreshToken !== 'string' || candidate.refreshToken.trim().length === 0) {
+    return null;
+  }
+
+  return {
+    refreshToken: candidate.refreshToken,
+  };
+}
+
 function parseSingleQueryParam(value: string | string[] | undefined): string | undefined {
   if (Array.isArray(value)) {
     return value[0];
@@ -356,25 +421,70 @@ function parsePagination(query: Record<string, string | string[]>):
   };
 }
 
-function hasValidBearerToken(authorizationHeader: string | undefined): boolean {
+function createSixDigitCode(): string {
+  return randomInt(0, 1_000_000).toString().padStart(6, '0');
+}
+
+function createOpaqueToken(prefix: string): string {
+  return `${prefix}_${randomUUID()}`;
+}
+
+function parseBearerToken(authorizationHeader: string | undefined): string | null {
   if (!authorizationHeader) {
-    return false;
+    return null;
   }
 
   const [scheme, token] = authorizationHeader.trim().split(/\s+/, 2);
   if (!scheme || !token) {
-    return false;
+    return null;
   }
 
-  return scheme.toLowerCase() === 'bearer';
+  if (scheme.toLowerCase() !== 'bearer') {
+    return null;
+  }
+
+  return token;
 }
 
-function requireAuth(authorizationHeader: string | undefined): { authorized: true } | { authorized: false } {
-  if (!hasValidBearerToken(authorizationHeader)) {
-    return { authorized: false };
+function requireAuth(
+  authorizationHeader: string | undefined,
+  accessTokens: Map<string, AccessTokenRecord>
+): AuthResult {
+  const accessToken = parseBearerToken(authorizationHeader);
+  if (!accessToken) {
+    return {
+      authorized: false,
+      status: 401,
+      code: 'unauthorized',
+      message: 'Authorization required',
+    };
   }
 
-  return { authorized: true };
+  const tokenRecord = accessTokens.get(accessToken);
+  if (!tokenRecord) {
+    return {
+      authorized: false,
+      status: 401,
+      code: 'unauthorized',
+      message: 'Authorization required',
+    };
+  }
+
+  if (tokenRecord.expiresAt <= Date.now()) {
+    accessTokens.delete(accessToken);
+    return {
+      authorized: false,
+      status: 401,
+      code: 'token_expired',
+      message: 'Access token expired',
+    };
+  }
+
+  return {
+    authorized: true,
+    accessToken,
+    deviceId: tokenRecord.deviceId,
+  };
 }
 
 async function workspaceExists(sessionManager: MockSessionManager, workspaceId: string): Promise<boolean> {
@@ -706,8 +816,16 @@ export function createTestServer(options: TestServerOptions = {}): GatewayServer
   const sessionManager = options.sessionManager ?? createMockSessionManager();
   const version = options.version ?? DEFAULT_VERSION;
   const heartbeatIntervalMs = options.sseHeartbeatIntervalMs ?? DEFAULT_SSE_HEARTBEAT_INTERVAL_MS;
+  const pairingCodeTtlMs = options.pairingCodeTtlMs ?? DEFAULT_PAIRING_CODE_TTL_MS;
+  const accessTokenTtlMs = options.accessTokenTtlMs ?? DEFAULT_ACCESS_TOKEN_TTL_MS;
+  const refreshTokenTtlMs = options.refreshTokenTtlMs ?? DEFAULT_REFRESH_TOKEN_TTL_MS;
   const sseClientsByWorkspace = new Map<string, Set<ServerResponse>>();
   const sessionWorkspaceCache = new Map<string, string>();
+  const pairingCodes = new Map<string, PairingCodeRecord>();
+  const accessTokens = new Map<string, AccessTokenRecord>([
+    [LEGACY_TEST_ACCESS_TOKEN, { deviceId: 'legacy-test-device', expiresAt: Number.MAX_SAFE_INTEGER }],
+  ]);
+  const refreshTokens = new Map<string, RefreshTokenRecord>();
 
   const addClient = (workspaceId: string, response: ServerResponse): void => {
     const workspaceClients = sseClientsByWorkspace.get(workspaceId) ?? new Set<ServerResponse>();
@@ -791,6 +909,29 @@ export function createTestServer(options: TestServerOptions = {}): GatewayServer
     }
   };
 
+  const issueAccessToken = (deviceId: string): { accessToken: string; expiresAt: number } => {
+    const accessToken = createOpaqueToken('at');
+    const expiresAt = Date.now() + accessTokenTtlMs;
+    accessTokens.set(accessToken, {
+      deviceId,
+      expiresAt,
+    });
+
+    return {
+      accessToken,
+      expiresAt,
+    };
+  };
+
+  const issueRefreshToken = (deviceId: string): string => {
+    const refreshToken = createOpaqueToken('rt');
+    refreshTokens.set(refreshToken, {
+      deviceId,
+      expiresAt: Date.now() + refreshTokenTtlMs,
+    });
+    return refreshToken;
+  };
+
   const gatewayServer = createGatewayServer({
     host: options.host ?? DEFAULT_HOST,
     port: options.port ?? DEFAULT_PORT,
@@ -807,12 +948,105 @@ export function createTestServer(options: TestServerOptions = {}): GatewayServer
         },
       },
       {
+        method: 'POST',
+        path: '/api/pair/start',
+        handler: ({ json }) => {
+          const pairingId = `pair_${randomUUID()}`;
+          const code = createSixDigitCode();
+          const expiresAt = Date.now() + pairingCodeTtlMs;
+
+          pairingCodes.set(pairingId, {
+            code,
+            expiresAt,
+          });
+
+          const payload: PairingStartResponse = {
+            pairingId,
+            code,
+            expiresAt,
+          };
+
+          json(200, payload);
+        },
+      },
+      {
+        method: 'POST',
+        path: '/api/pair/confirm',
+        handler: async ({ parseJsonBody, error, json }) => {
+          const payload = await parseJsonBody<unknown>();
+          const pairConfirmPayload = parsePairConfirmPayload(payload);
+
+          if (!pairConfirmPayload) {
+            error(400, 'invalid_request', 'pairingId and code are required');
+            return;
+          }
+
+          const pairingCodeRecord = pairingCodes.get(pairConfirmPayload.pairingId);
+          if (!pairingCodeRecord) {
+            error(401, 'invalid_pairing_code', 'Pairing code is invalid');
+            return;
+          }
+
+          if (pairingCodeRecord.expiresAt <= Date.now()) {
+            pairingCodes.delete(pairConfirmPayload.pairingId);
+            error(410, 'pairing_code_expired', 'Pairing code has expired');
+            return;
+          }
+
+          if (pairingCodeRecord.code !== pairConfirmPayload.code) {
+            error(401, 'invalid_pairing_code', 'Pairing code is invalid');
+            return;
+          }
+
+          pairingCodes.delete(pairConfirmPayload.pairingId);
+
+          const deviceId = `device_${randomUUID()}`;
+          const { accessToken, expiresAt } = issueAccessToken(deviceId);
+          const refreshToken = issueRefreshToken(deviceId);
+
+          const response: PairingConfirmResponse = {
+            accessToken,
+            refreshToken,
+            expiresAt,
+            deviceId,
+          };
+
+          json(200, response);
+        },
+      },
+      {
+        method: 'POST',
+        path: '/api/pair/refresh',
+        handler: async ({ parseJsonBody, error, json }) => {
+          const payload = await parseJsonBody<unknown>();
+          const refreshPayload = parseTokenRefreshPayload(payload);
+
+          if (!refreshPayload) {
+            error(400, 'invalid_request', 'refreshToken is required');
+            return;
+          }
+
+          const refreshRecord = refreshTokens.get(refreshPayload.refreshToken);
+          if (!refreshRecord || refreshRecord.expiresAt <= Date.now()) {
+            if (refreshRecord) {
+              refreshTokens.delete(refreshPayload.refreshToken);
+            }
+
+            error(401, 'invalid_refresh_token', 'Refresh token is invalid or expired');
+            return;
+          }
+
+          const tokenResponse: TokenRefreshResponse = issueAccessToken(refreshRecord.deviceId);
+          json(200, tokenResponse);
+        },
+      },
+      {
         method: 'GET',
         path: '/api/workspaces',
         handler: async ({ req, error, json }) => {
-          const auth = requireAuth(req.headers.authorization);
+          const auth = requireAuth(req.headers.authorization, accessTokens);
           if (!auth.authorized) {
-            error(401, 'unauthorized', 'Authorization required');
+            error(auth.status, auth.code, auth.message);
             return;
           }
 
@@ -824,9 +1058,9 @@ export function createTestServer(options: TestServerOptions = {}): GatewayServer
         method: 'GET',
         path: '/api/workspaces/:workspaceId/events',
         handler: async ({ req, res, params, error }) => {
-          const auth = requireAuth(req.headers.authorization);
+          const auth = requireAuth(req.headers.authorization, accessTokens);
           if (!auth.authorized) {
-            error(401, 'unauthorized', 'Authorization required');
+            error(auth.status, auth.code, auth.message);
             return;
           }
 
@@ -864,9 +1098,9 @@ export function createTestServer(options: TestServerOptions = {}): GatewayServer
         method: 'GET',
         path: '/api/workspaces/:workspaceId/sessions',
         handler: async ({ req, params, error, json }) => {
-          const auth = requireAuth(req.headers.authorization);
+          const auth = requireAuth(req.headers.authorization, accessTokens);
           if (!auth.authorized) {
-            error(401, 'unauthorized', 'Authorization required');
+            error(auth.status, auth.code, auth.message);
             return;
           }
 
@@ -888,9 +1122,9 @@ export function createTestServer(options: TestServerOptions = {}): GatewayServer
         method: 'POST',
         path: '/api/workspaces/:workspaceId/sessions',
         handler: async ({ req, params, parseJsonBody, error, json }) => {
-          const auth = requireAuth(req.headers.authorization);
+          const auth = requireAuth(req.headers.authorization, accessTokens);
           if (!auth.authorized) {
-            error(401, 'unauthorized', 'Authorization required');
+            error(auth.status, auth.code, auth.message);
             return;
           }
 
@@ -923,9 +1157,9 @@ export function createTestServer(options: TestServerOptions = {}): GatewayServer
         method: 'GET',
         path: '/api/sessions/:sessionId',
         handler: async ({ req, params, query, error, json }) => {
-          const auth = requireAuth(req.headers.authorization);
+          const auth = requireAuth(req.headers.authorization, accessTokens);
           if (!auth.authorized) {
-            error(401, 'unauthorized', 'Authorization required');
+            error(auth.status, auth.code, auth.message);
             return;
           }
 
@@ -964,9 +1198,9 @@ export function createTestServer(options: TestServerOptions = {}): GatewayServer
         method: 'POST',
         path: '/api/sessions/:sessionId/messages',
         handler: async ({ req, params, parseJsonBody, error, json }) => {
-          const auth = requireAuth(req.headers.authorization);
+          const auth = requireAuth(req.headers.authorization, accessTokens);
           if (!auth.authorized) {
-            error(401, 'unauthorized', 'Authorization required');
+            error(auth.status, auth.code, auth.message);
             return;
           }
 
@@ -1016,9 +1250,9 @@ export function createTestServer(options: TestServerOptions = {}): GatewayServer
         method: 'POST',
         path: '/api/sessions/:sessionId/commands',
         handler: async ({ req, params, parseJsonBody, error, json }) => {
-          const auth = requireAuth(req.headers.authorization);
+          const auth = requireAuth(req.headers.authorization, accessTokens);
           if (!auth.authorized) {
-            error(401, 'unauthorized', 'Authorization required');
+            error(auth.status, auth.code, auth.message);
             return;
           }
 
@@ -1095,9 +1329,9 @@ export function createTestServer(options: TestServerOptions = {}): GatewayServer
         method: 'POST',
         path: '/api/sessions/:sessionId/interrupt',
         handler: async ({ req, params, error, json }) => {
-          const auth = requireAuth(req.headers.authorization);
+          const auth = requireAuth(req.headers.authorization, accessTokens);
           if (!auth.authorized) {
-            error(401, 'unauthorized', 'Authorization required');
+            error(auth.status, auth.code, auth.message);
             return;
           }
 
@@ -1132,9 +1366,9 @@ export function createTestServer(options: TestServerOptions = {}): GatewayServer
         method: 'POST',
         path: '/api/sessions/:sessionId/shells/:shellId/kill',
         handler: async ({ req, params, error, json }) => {
-          const auth = requireAuth(req.headers.authorization);
+          const auth = requireAuth(req.headers.authorization, accessTokens);
           if (!auth.authorized) {
-            error(401, 'unauthorized', 'Authorization required');
+            error(auth.status, auth.code, auth.message);
             return;
           }
 
@@ -1179,9 +1413,9 @@ export function createTestServer(options: TestServerOptions = {}): GatewayServer
         method: 'DELETE',
         path: '/api/sessions/:sessionId',
         handler: async ({ req, params, error, noContent }) => {
-          const auth = requireAuth(req.headers.authorization);
+          const auth = requireAuth(req.headers.authorization, accessTokens);
           if (!auth.authorized) {
-            error(401, 'unauthorized', 'Authorization required');
+            error(auth.status, auth.code, auth.message);
             return;
           }
 
