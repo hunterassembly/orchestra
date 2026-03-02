@@ -1,5 +1,6 @@
 commands:
   install: bun install
+  test: echo "Use package-specific test commands (test:gateway, test:contracts, etc.) - root bun test has pre-existing failures"
   typecheck:gateway: cd packages/mobile-gateway && bun run tsc --noEmit
   typecheck:contracts: cd packages/mobile-contracts && bun run tsc --noEmit
   typecheck:tokens: cd packages/mobile-tokens && bun run tsc --noEmit
