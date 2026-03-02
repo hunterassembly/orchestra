@@ -1,0 +1,15 @@
+{
+  "featureId": "gateway-interrupt-kill",
+  "reviewedAt": "2026-03-02T09:13:09-06:00",
+  "commitId": "b127c56",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "Implementation adds authenticated interrupt and shell-kill routes to the gateway test server with appropriate SSE fanout and 404 handling, plus comprehensive tests covering success, no-op interrupt, unknown shell, and auth enforcement. The mock session manager now supports cancelProcessing/killShell to back the new behavior.",
+    "issues": []
+  },
+  "sharedStateObservations": [],
+  "addressesFailureFrom": null,
+  "summary": "Reviewed gateway-interrupt-kill: routes, mock session manager updates, and tests align with expected behaviors and auth/SSE requirements. No issues found."
+}

@@ -1,0 +1,15 @@
+{
+  "featureId": "gateway-device-revocation",
+  "reviewedAt": "2026-03-02T15:13:05Z",
+  "commitId": "76b9cf3a7230b9bc6db95e2b043448a401d3de73",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "Revocation endpoint, token invalidation, and SSE teardown are implemented in the gateway test server with focused tests covering access/refresh invalidation and active stream closure. The behavior matches the feature expectations and integrates cleanly with existing auth and SSE tracking.",
+    "issues": []
+  },
+  "sharedStateObservations": [],
+  "addressesFailureFrom": null,
+  "summary": "Reviewed gateway-device-revocation commit: implementation and tests align with expected revocation behavior; no issues found."
+}

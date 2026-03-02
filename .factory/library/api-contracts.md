@@ -13,6 +13,8 @@ Gateway API endpoint reference and contract details.
 | GET | /api/health | No | Health check |
 | POST | /api/pair/start | No | Start pairing, returns code |
 | POST | /api/pair/confirm | No | Confirm pairing, returns tokens |
+| POST | /api/pair/refresh | No | Refresh access token |
+| POST | /api/devices/:deviceId/revoke | Yes | Revoke device, invalidate tokens |
 | GET | /api/workspaces | Yes | List workspaces |
 | GET | /api/workspaces/:id/sessions | Yes | List sessions |
 | POST | /api/workspaces/:id/sessions | Yes | Create session |

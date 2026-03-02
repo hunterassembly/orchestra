@@ -1,0 +1,57 @@
+{
+  "milestone": "gateway-messaging-auth",
+  "round": 1,
+  "status": "pass",
+  "validatorsRun": {
+    "test": {
+      "passed": true,
+      "command": "cd packages/mobile-gateway && bun test",
+      "exitCode": 0,
+      "details": "65 pass, 0 fail, 268 expect() calls across 9 files"
+    },
+    "test:contracts": {
+      "passed": true,
+      "command": "cd packages/mobile-contracts && bun test",
+      "exitCode": 0,
+      "details": "3 pass, 0 fail, 16 expect() calls across 1 file"
+    },
+    "typecheck:gateway": {
+      "passed": true,
+      "command": "cd packages/mobile-gateway && bun run tsc --noEmit",
+      "exitCode": 0
+    },
+    "typecheck:contracts": {
+      "passed": true,
+      "command": "cd packages/mobile-contracts && bun run tsc --noEmit",
+      "exitCode": 0
+    },
+    "lint": {
+      "passed": true,
+      "command": "echo 'No lint configured for new packages yet'",
+      "exitCode": 0,
+      "details": "No lint configured per services.yaml"
+    }
+  },
+  "reviewsSummary": {
+    "total": 7,
+    "passed": 7,
+    "failed": 0,
+    "failedFeatures": []
+  },
+  "blockingIssues": [],
+  "appliedUpdates": [
+    {
+      "target": "library",
+      "description": "Added /api/pair/refresh and POST /api/devices/:deviceId/revoke to api-contracts.md endpoint table",
+      "sourceFeature": "gateway-pairing-auth"
+    },
+    {
+      "target": "library",
+      "description": "Updated user-testing.md auth token guidance: test server now validates tokens (use test-token or pair to get a valid token), arbitrary strings are rejected",
+      "sourceFeature": "gateway-pairing-auth"
+    }
+  ],
+  "suggestedGuidanceUpdates": [],
+  "rejectedObservations": [],
+  "previousRound": null
+}

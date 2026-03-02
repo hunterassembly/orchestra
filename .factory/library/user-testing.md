@@ -36,7 +36,7 @@ Testing surface, tools, URLs, setup steps, and known quirks.
 ## Flow Validator Guidance: Gateway API (curl)
 
 **Server URL:** http://localhost:7842  
-**Auth token:** Any string works as Bearer token in test server (e.g., `Bearer test-token`)  
+**Auth token:** Use `Bearer test-token` (pre-seeded) or pair via POST /api/pair/start + /api/pair/confirm to get a valid token. The test server validates tokens — arbitrary strings are rejected.  
 **Default workspace ID:** `default`  
 **Default workspace name:** `Default Workspace`
 

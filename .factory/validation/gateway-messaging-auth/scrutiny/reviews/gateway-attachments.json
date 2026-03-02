@@ -1,0 +1,15 @@
+{
+  "featureId": "gateway-attachments",
+  "reviewedAt": "2026-03-02T15:13:09Z",
+  "commitId": "7bd5aa7c40910d444b4914957ccc01fd0a305c2d",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "Implementation covers multipart and base64 uploads with auth, MIME/size/empty validation, AttachmentDTO responses, and attachment reference validation in subsequent message sends. Tests exercise success, auth, MIME, size, empty file, and reference usage as required.",
+    "issues": []
+  },
+  "sharedStateObservations": [],
+  "addressesFailureFrom": null,
+  "summary": "Reviewed gateway-attachments: diff and transcript show the new attachment upload endpoint, validation logic, and tests; no issues found."
+}
