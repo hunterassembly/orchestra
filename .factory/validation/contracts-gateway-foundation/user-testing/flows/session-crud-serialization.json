@@ -1,0 +1,187 @@
+{
+  "groupId": "session-crud-serialization",
+  "testedAt": "2026-03-02T13:10:22Z",
+  "credentials": {
+    "account": "group2-token",
+    "namespace": "g2-"
+  },
+  "toolsUsed": [
+    "curl",
+    "python3"
+  ],
+  "assertions": [
+    {
+      "id": "VAL-GW-003",
+      "title": "Session list for workspace",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "GET /api/workspaces/default/sessions with Authorization header",
+          "expected": "HTTP 200 with JSON array of session DTOs containing id, workspaceId, name, lastMessageAt, isProcessing, sessionStatus",
+          "observed": "HTTP 200 with JSON array; required fields present on each session"
+        }
+      ],
+      "evidence": {
+        "network": "GET /api/workspaces/default/sessions -> 200; response array includes required fields",
+        "notes": "python3 validation confirmed required keys present"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-GW-004",
+      "title": "Create session returns new session DTO",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "POST /api/workspaces/default/sessions with name g2-options-session",
+          "expected": "HTTP 201 with SessionDTO",
+          "observed": "HTTP 201; returned id session-2 with DTO fields"
+        },
+        {
+          "action": "GET /api/workspaces/default/sessions",
+          "expected": "New session appears in list",
+          "observed": "session-2 present in list"
+        }
+      ],
+      "evidence": {
+        "network": "POST /api/workspaces/default/sessions -> 201; GET list -> 200 with session-2",
+        "responseSnippet": "{\"id\":\"session-2\",\"name\":\"g2-options-session\"}"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-GW-005",
+      "title": "Get session with message history",
+      "status": "blocked",
+      "steps": [
+        {
+          "action": "GET /api/sessions/session-2",
+          "expected": "HTTP 200 with messages array containing message content",
+          "observed": "HTTP 200 with messages: []"
+        }
+      ],
+      "evidence": {
+        "network": "GET /api/sessions/session-2 -> 200; messages array present but empty"
+      },
+      "issues": "Test server provides no API to create or seed messages; unable to produce message content for validation. Session responses include messages: [] only."
+    },
+    {
+      "id": "VAL-GW-006",
+      "title": "Delete session removes and emits event",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Open SSE stream on /api/workspaces/default/events",
+          "expected": "SSE stream receives events",
+          "observed": "SSE stream active"
+        },
+        {
+          "action": "DELETE /api/sessions/session-4",
+          "expected": "HTTP 204",
+          "observed": "HTTP 204"
+        },
+        {
+          "action": "GET /api/sessions/session-4",
+          "expected": "HTTP 404",
+          "observed": "HTTP 404 with session_not_found"
+        },
+        {
+          "action": "Inspect SSE log",
+          "expected": "session_deleted event received",
+          "observed": "event: session_deleted data: {\"type\":\"session_deleted\",\"sessionId\":\"session-4\"}"
+        }
+      ],
+      "evidence": {
+        "network": "DELETE /api/sessions/session-4 -> 204; GET -> 404",
+        "sse": "session_deleted event observed in SSE log"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-GW-010",
+      "title": "DTOs use stable serialization",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Parse JSON from session list and session detail responses",
+          "expected": "JSON.parse succeeds; timestamps are numbers; optional fields are null/omitted",
+          "observed": "JSON parsed successfully; lastMessageAt is integer; hasMore is boolean; nullable fields return null"
+        }
+      ],
+      "evidence": {
+        "network": "GET /api/workspaces/default/sessions and GET /api/sessions/session-2 both parse as JSON",
+        "notes": "python3 checks confirmed lastMessageAt is int and hasMore is boolean"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-GW-012",
+      "title": "Unknown session returns 404",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "GET /api/sessions/session-does-not-exist-g2",
+          "expected": "HTTP 404 with error body",
+          "observed": "HTTP 404 with {code: session_not_found, message: Session not found}"
+        }
+      ],
+      "evidence": {
+        "network": "GET /api/sessions/session-does-not-exist-g2 -> 404"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-GW-014",
+      "title": "CreateSessionOptions fields honored",
+      "status": "fail",
+      "steps": [
+        {
+          "action": "POST /api/workspaces/default/sessions with name, permissionMode, workingDirectory",
+          "expected": "Returned DTO includes name, permissionMode, workingDirectory",
+          "observed": "Returned DTO includes name and permissionMode; workingDirectory missing"
+        },
+        {
+          "action": "GET /api/sessions/session-2",
+          "expected": "DTO includes workingDirectory",
+          "observed": "workingDirectory not present in response"
+        }
+      ],
+      "evidence": {
+        "network": "POST /api/workspaces/default/sessions -> 201 with no workingDirectory field; GET /api/sessions/session-2 -> 200 without workingDirectory"
+      },
+      "issues": "workingDirectory is accepted on create but is not serialized in SessionDTO responses."
+    },
+    {
+      "id": "VAL-GW-016",
+      "title": "Session message pagination",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "GET /api/sessions/session-2?limit=1&cursor=0",
+          "expected": "HTTP 200 with messages array and pagination metadata (hasMore, nextCursor)",
+          "observed": "HTTP 200 with messages: [], hasMore: false, nextCursor: null"
+        },
+        {
+          "action": "GET /api/sessions/session-2?limit=0",
+          "expected": "Edge case behavior observed",
+          "observed": "HTTP 400 invalid_query (limit must be a positive integer)"
+        }
+      ],
+      "evidence": {
+        "network": "GET /api/sessions/session-2?limit=1&cursor=0 -> 200 with hasMore; limit=0 -> 400 invalid_query"
+      },
+      "issues": null
+    }
+  ],
+  "frictions": [],
+  "blockers": [
+    {
+      "description": "Test server has no API to create or seed message history; unable to validate message content requirement for VAL-GW-005.",
+      "affectedAssertions": [
+        "VAL-GW-005"
+      ],
+      "quickFixAttempted": "Queried session detail and inspected test server routes; no message creation endpoint available."
+    }
+  ],
+  "summary": "Tested 8 assertions: 6 passed, 1 failed (VAL-GW-014), 1 blocked (VAL-GW-005)."
+}

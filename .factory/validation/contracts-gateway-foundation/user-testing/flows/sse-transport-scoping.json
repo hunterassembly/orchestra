@@ -1,0 +1,83 @@
+{
+  "groupId": "sse-transport-scoping",
+  "testedAt": "2026-03-02T13:06:43Z",
+  "credentials": {
+    "account": "group3-token",
+    "namespace": "g3-"
+  },
+  "toolsUsed": [
+    "curl"
+  ],
+  "assertions": [
+    {
+      "id": "VAL-GW-007",
+      "title": "SSE connection with proper transport",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "GET /api/workspaces/default/events with -v -N to inspect headers",
+          "expected": "Content-Type: text/event-stream, Cache-Control: no-cache, Connection: keep-alive",
+          "observed": "Response headers included Content-Type: text/event-stream, Cache-Control: no-cache, Connection: keep-alive"
+        },
+        {
+          "action": "Keep SSE connection open and observe stream",
+          "expected": "Heartbeat/ping received and connection stays open",
+          "observed": "Received ping event: event: ping / data: {\"type\":\"ping\"} while stream remained open"
+        },
+        {
+          "action": "Create session g3-sse-test-1 while SSE connected",
+          "expected": "session_created event delivered over SSE",
+          "observed": "Received session_created with sessionId session-1"
+        }
+      ],
+      "evidence": {
+        "headers": "HTTP/1.1 200 OK; Content-Type: text/event-stream; Cache-Control: no-cache; Connection: keep-alive",
+        "heartbeat": "event: ping / data: {\"type\":\"ping\"}",
+        "network": "GET /api/workspaces/default/events -> 200; POST /api/workspaces/default/sessions -> 201"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-GW-008",
+      "title": "SSE events are workspace-scoped",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Connect SSE to /api/workspaces/default/events and create session g3-sse-test-1",
+          "expected": "Events reference sessions in default workspace",
+          "observed": "session_created event referenced session-1; GET /api/sessions/session-1 shows workspaceId: default"
+        },
+        {
+          "action": "Request SSE for nonexistent workspace",
+          "expected": "404 for unknown workspace",
+          "observed": "GET /api/workspaces/not-a-workspace/events -> 404 workspace_not_found"
+        }
+      ],
+      "evidence": {
+        "network": "GET /api/sessions/session-1 -> 200 (workspaceId: default); GET /api/workspaces/not-a-workspace/events -> 404",
+        "events": "SSE stream contained session_created events for session-1 and session-3 created in default workspace"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-GW-009",
+      "title": "Multiple SSE clients receive same events",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Open two concurrent SSE connections to /api/workspaces/default/events",
+          "expected": "Both streams receive the same session_created event",
+          "observed": "Both SSE clients received session_created for session-3 after creating g3-sse-test-2"
+        }
+      ],
+      "evidence": {
+        "events": "Client A log: session_created session-3; Client B log: session_created session-3",
+        "network": "POST /api/workspaces/default/sessions -> 201 (session-3)"
+      },
+      "issues": null
+    }
+  ],
+  "frictions": [],
+  "blockers": [],
+  "summary": "Tested SSE transport and scoping assertions: headers and heartbeat verified, events tied to default workspace, and concurrent SSE clients both received the same session_created event."
+}

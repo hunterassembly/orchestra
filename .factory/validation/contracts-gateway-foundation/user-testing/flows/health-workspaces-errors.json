@@ -1,0 +1,98 @@
+{
+  "groupId": "health-workspaces-errors",
+  "testedAt": "2026-03-02T13:05:09Z",
+  "credentials": {
+    "account": "group1-token",
+    "namespace": "g1-"
+  },
+  "toolsUsed": [
+    "curl"
+  ],
+  "assertions": [
+    {
+      "id": "VAL-GW-001",
+      "title": "Health endpoint responds without auth",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "GET /api/health (no Authorization header)",
+          "expected": "HTTP 200 with JSON body containing status: \"ok\"",
+          "observed": "HTTP 200 with body {\"status\":\"ok\",\"version\":\"0.0.0\"}"
+        }
+      ],
+      "evidence": {
+        "network": "GET /api/health -> 200",
+        "responseBody": "{\"status\":\"ok\",\"version\":\"0.0.0\"}"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-GW-002",
+      "title": "Workspace list returns workspace DTOs",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "GET /api/workspaces with Authorization: Bearer group1-token",
+          "expected": "HTTP 200 with JSON array of DTOs containing id and name",
+          "observed": "HTTP 200 with body [{\"id\":\"default\",\"name\":\"Default Workspace\"}]"
+        }
+      ],
+      "evidence": {
+        "network": "GET /api/workspaces -> 200",
+        "responseBody": "[{\"id\":\"default\",\"name\":\"Default Workspace\"}]"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-GW-011",
+      "title": "Unknown workspace returns 404",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "GET /api/workspaces/g1-missing/sessions with Authorization header",
+          "expected": "HTTP 404 with error body",
+          "observed": "HTTP 404 with body {\"code\":\"workspace_not_found\",\"message\":\"Workspace not found\"}"
+        }
+      ],
+      "evidence": {
+        "network": "GET /api/workspaces/g1-missing/sessions -> 404",
+        "responseBody": "{\"code\":\"workspace_not_found\",\"message\":\"Workspace not found\"}"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-GW-015",
+      "title": "Consistent error response shape",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "GET /api/workspaces without Authorization header",
+          "expected": "HTTP 401 with error DTO containing code and message",
+          "observed": "HTTP 401 with body {\"code\":\"unauthorized\",\"message\":\"Authorization required\"}"
+        },
+        {
+          "action": "GET /api/workspaces/g1-missing/sessions with Authorization header",
+          "expected": "HTTP 404 with error DTO containing code and message",
+          "observed": "HTTP 404 with body {\"code\":\"workspace_not_found\",\"message\":\"Workspace not found\"}"
+        },
+        {
+          "action": "POST /api/workspaces/default/sessions with {\"name\":\"\"} and Authorization header",
+          "expected": "HTTP 400 with error DTO containing code and message",
+          "observed": "HTTP 400 with body {\"code\":\"invalid_request\",\"message\":\"Invalid create session options\"}"
+        }
+      ],
+      "evidence": {
+        "network": "401 unauthorized, 404 workspace_not_found, 400 invalid_request all returned code/message fields",
+        "responseBodies": [
+          "{\"code\":\"unauthorized\",\"message\":\"Authorization required\"}",
+          "{\"code\":\"workspace_not_found\",\"message\":\"Workspace not found\"}",
+          "{\"code\":\"invalid_request\",\"message\":\"Invalid create session options\"}"
+        ]
+      },
+      "issues": null
+    }
+  ],
+  "frictions": [],
+  "blockers": [],
+  "summary": "Tested 4 assertions: all passed."
+}
