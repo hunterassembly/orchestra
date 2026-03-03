@@ -26,7 +26,7 @@ import {
 } from '@craft-agent/ui'
 import { UnifiedDiffViewer } from '@craft-agent/ui'
 import { useTheme } from '@/hooks/useTheme'
-import type { Tab, FileTab, TurnTab } from '@/hooks/useChatTabs'
+import type { Tab, FileTab, TurnTab, WorkflowTab } from '@/hooks/useChatTabs'
 
 export interface TabContentRendererProps {
   tab: Tab
@@ -69,6 +69,10 @@ export function TabContentRenderer({
         onOpenUrl={onOpenUrl}
       />
     )
+  }
+
+  if (tab.kind === 'workflow') {
+    return <WorkflowTabContent tab={tab} />
   }
 
   return null
@@ -211,6 +215,22 @@ function FileTabContent({
     default:
       return null
   }
+}
+
+function WorkflowTabContent({ tab }: { tab: WorkflowTab }) {
+  return (
+    <div className="h-full overflow-auto p-4">
+      <div className="mx-auto max-w-3xl rounded-xl border border-border/40 bg-background p-4">
+        <p className="text-sm font-medium text-foreground">{tab.label}</p>
+        <p className="mt-1 text-xs text-muted-foreground">
+          Workflow dispatched to this session.
+        </p>
+        <pre className="mt-3 whitespace-pre-wrap rounded-md bg-foreground/[0.03] p-3 text-xs text-foreground/80">
+          {tab.prompt}
+        </pre>
+      </div>
+    </div>
+  )
 }
 
 // ============================================================

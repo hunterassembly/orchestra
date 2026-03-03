@@ -10,6 +10,8 @@ import { windowWorkspaceIdAtom } from './atoms/sessions'
 import { Toaster } from '@/components/ui/sonner'
 import './index.css'
 
+const LAST_RENDERER_ERROR_KEY = 'craft-last-renderer-error'
+
 // Known-harmless console messages that should NOT be sent to Sentry.
 // These are dev-mode noise or expected warnings that aren't actionable.
 const IGNORED_CONSOLE_PATTERNS = [
@@ -71,10 +73,23 @@ sentryInit(
  * Sentry.ErrorBoundary captures the error and sends it to Sentry automatically.
  */
 function CrashFallback() {
+  const lastError = (() => {
+    try {
+      return localStorage.getItem(LAST_RENDERER_ERROR_KEY)
+    } catch {
+      return null
+    }
+  })()
+
   return (
     <div className="flex flex-col items-center justify-center h-screen font-sans text-foreground/50 gap-3">
       <p className="text-base font-medium">Something went wrong</p>
       <p className="text-[13px]">Please restart the app. The error has been reported.</p>
+      {lastError && (
+        <p className="text-[11px] max-w-[92vw] text-center text-foreground/40 break-all px-4">
+          {lastError}
+        </p>
+      )}
       <button
         onClick={() => window.location.reload()}
         className="mt-2 px-4 py-1.5 rounded-md bg-background shadow-minimal text-[13px] text-foreground/70 cursor-pointer"
@@ -84,6 +99,29 @@ function CrashFallback() {
     </div>
   )
 }
+
+window.addEventListener('error', (event) => {
+  try {
+    const value = event.error instanceof Error
+      ? `${event.error.name}: ${event.error.message}`
+      : String(event.message || 'Unknown renderer error')
+    localStorage.setItem(LAST_RENDERER_ERROR_KEY, value)
+  } catch {
+    // ignore
+  }
+})
+
+window.addEventListener('unhandledrejection', (event) => {
+  try {
+    const reason = event.reason
+    const value = reason instanceof Error
+      ? `${reason.name}: ${reason.message}`
+      : String(reason ?? 'Unhandled promise rejection')
+    localStorage.setItem(LAST_RENDERER_ERROR_KEY, value)
+  } catch {
+    // ignore
+  }
+})
 
 /**
  * Root component - loads workspace ID for theme context and renders App

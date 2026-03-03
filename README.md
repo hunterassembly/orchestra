@@ -354,6 +354,10 @@ Or configure manually in `~/.craft-agent/workspaces/{id}/automations.json`:
 
 See the [Automations documentation](https://agents.craft.do/docs/automations/overview) for the full reference.
 
+## Internal Reference Docs
+
+- [Transcription Reference](docs/reference/transcription.md) — push-to-talk architecture, native macOS capture path, settings, and troubleshooting.
+
 ## Advanced Features
 
 ### Large Response Handling

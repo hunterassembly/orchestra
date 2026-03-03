@@ -486,6 +486,10 @@ const api: ElectronAPI = {
     ipcRenderer.invoke(IPC_CHANNELS.INPUT_GET_WHISPER_MICROPHONE_ID) as Promise<string>,
   setWhisperMicrophoneId: (deviceId: string) =>
     ipcRenderer.invoke(IPC_CHANNELS.INPUT_SET_WHISPER_MICROPHONE_ID, deviceId),
+  startNativePushToTalk: (preferredDeviceLabel?: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.INPUT_NATIVE_PTT_START, preferredDeviceLabel) as Promise<void>,
+  stopNativePushToTalkAndTranscribe: () =>
+    ipcRenderer.invoke(IPC_CHANNELS.INPUT_NATIVE_PTT_STOP_AND_TRANSCRIBE) as Promise<string>,
   transcribeWithLocalWhisper: (audioBase64: string, mimeType: string) =>
     ipcRenderer.invoke(IPC_CHANNELS.INPUT_TRANSCRIBE_LOCAL_WHISPER, audioBase64, mimeType) as Promise<string>,
 
@@ -545,6 +549,12 @@ const api: ElectronAPI = {
   },
   getGitBranch: (dirPath: string) =>
     ipcRenderer.invoke(IPC_CHANNELS.GET_GIT_BRANCH, dirPath),
+  getGitRepoInfo: (dirPath: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.GET_GIT_REPO_INFO, dirPath),
+  switchGitBranch: (dirPath: string, branch: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.GIT_SWITCH_BRANCH, dirPath, branch),
+  getGitDiffStat: (dirPath: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.GET_GIT_DIFF_STAT, dirPath),
   getGitStatus: (dirPath: string) =>
     ipcRenderer.invoke(IPC_CHANNELS.GET_GIT_STATUS, dirPath),
   getGitDiff: (dirPath: string, filePath: string) =>

@@ -1,5 +1,6 @@
 import { formatDistanceToNowStrict } from "date-fns"
 import type { Locale } from "date-fns"
+import * as React from "react"
 import { Flag, ShieldAlert } from "lucide-react"
 import { useActionLabel } from "@/actions"
 import { cn } from "@/lib/utils"
@@ -15,6 +16,9 @@ import { useSessionListContext } from "@/context/SessionListContext"
 import { navigate, routes } from "@/lib/navigate"
 import type { SessionMeta } from "@/atoms/sessions"
 import { extractLabelId } from "@craft-agent/shared/labels"
+import type { GitDiffStat } from "../../../shared/types"
+
+const diffStatCache = new Map<string, GitDiffStat>()
 
 export interface SessionItemProps {
   item: SessionMeta
@@ -49,6 +53,38 @@ export function SessionItem({
     return ctx.flatLabels.some(l => l.id === labelId)
   }))
   const hasPendingPrompt = ctx.hasPendingPrompt?.(item.id) ?? false
+  const [diffStat, setDiffStat] = React.useState<GitDiffStat>(() => (
+    item.workingDirectory ? (diffStatCache.get(item.workingDirectory) ?? { added: 0, deleted: 0 }) : { added: 0, deleted: 0 }
+  ))
+
+  React.useEffect(() => {
+    if (!item.workingDirectory) {
+      setDiffStat({ added: 0, deleted: 0 })
+      return
+    }
+
+    const cached = diffStatCache.get(item.workingDirectory)
+    if (cached) {
+      setDiffStat(cached)
+    }
+
+    let cancelled = false
+    void window.electronAPI.getGitDiffStat(item.workingDirectory)
+      .then((stat) => {
+        if (cancelled) return
+        diffStatCache.set(item.workingDirectory!, stat)
+        setDiffStat(stat)
+      })
+      .catch(() => {
+        if (!cancelled) setDiffStat({ added: 0, deleted: 0 })
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [item.workingDirectory, item.lastMessageAt])
+
+  const hasDiffStat = diffStat.added > 0 || diffStat.deleted > 0
 
   const handleClick = (e: React.MouseEvent) => {
     ctx.onFocusZone()
@@ -155,6 +191,17 @@ export function SessionItem({
           title={`Matches found (${nextHotkey} next, ${prevHotkey} prev)`}
         >
           {chatMatchCount}
+        </span>
+      ) : hasDiffStat ? (
+        <span
+          className={cn(
+            "inline-flex items-center gap-2 text-sm font-medium tabular-nums whitespace-nowrap",
+            isSelected ? "text-foreground/90" : "text-foreground/80",
+          )}
+          title={`Workspace diff: +${diffStat.added} -${diffStat.deleted}`}
+        >
+          <span className="text-green-500">+{diffStat.added}</span>
+          <span className="text-red-500">-{diffStat.deleted}</span>
         </span>
       ) : item.isFlagged ? (
         <div className="p-1 flex items-center justify-center">

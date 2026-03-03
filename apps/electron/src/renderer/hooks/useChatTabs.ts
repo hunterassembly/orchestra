@@ -34,7 +34,15 @@ export interface TurnTab {
   overlayState: ChatOverlayState
 }
 
-export type Tab = ChatTab | FileTab | TurnTab
+export interface WorkflowTab {
+  id: string
+  kind: 'workflow'
+  label: string
+  prompt: string
+  sentAt: number
+}
+
+export type Tab = ChatTab | FileTab | TurnTab | WorkflowTab
 
 // ============================================================
 // Hook
@@ -97,6 +105,19 @@ export function useChatTabs(sessionId: string, chatLabel: string) {
     setActiveTabId(id)
   }, [])
 
+  const openWorkflowTab = useCallback((workflow: { label: string; prompt: string }) => {
+    const id = `workflow-${++tabIdCounter}`
+    const newTab: WorkflowTab = {
+      id,
+      kind: 'workflow',
+      label: workflow.label,
+      prompt: workflow.prompt,
+      sentAt: Date.now(),
+    }
+    setTabs((prev) => [...prev, newTab])
+    setActiveTabId(id)
+  }, [])
+
   const closeTab = useCallback((id: string) => {
     if (id === 'chat') return // Can't close chat tab
 
@@ -129,6 +150,7 @@ export function useChatTabs(sessionId: string, chatLabel: string) {
     activateTab,
     openFileTab,
     openTurnTab,
+    openWorkflowTab,
     closeTab,
   }
 }

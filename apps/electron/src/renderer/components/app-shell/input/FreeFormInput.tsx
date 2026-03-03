@@ -126,11 +126,11 @@ function blobToBase64(blob: Blob): Promise<string> {
 }
 
 const SUPPORTED_AUDIO_MIME_TYPES = [
-  'audio/webm;codecs=opus',
-  'audio/webm',
   'audio/ogg;codecs=opus',
   'audio/ogg',
   'audio/wav',
+  'audio/webm;codecs=opus',
+  'audio/webm',
   'audio/mp4',
   'audio/mpeg',
 ]
@@ -171,9 +171,13 @@ async function getDefaultMicrophoneConstraints(preferredDeviceId?: string): Prom
 
     return {
       deviceId: { ideal: defaultMic.deviceId },
-      echoCancellation: true,
-      noiseSuppression: true,
-      autoGainControl: true,
+      // Keep capture as "raw" as possible to avoid OS/driver communication-mode
+      // side effects (ducking / output device switching) when PTT starts.
+      echoCancellation: false,
+      noiseSuppression: false,
+      autoGainControl: false,
+      channelCount: 1,
+      sampleRate: 16000,
     }
   } catch {
     return true
@@ -1227,8 +1231,32 @@ export function FreeFormInput({
     })
   }, [syncToParent, richInputRef])
 
+  const resolvePreferredMicLabelForNativePtt = React.useCallback(async (): Promise<string | undefined> => {
+    if (!navigator.mediaDevices?.enumerateDevices) return undefined
+    if (!whisperMicrophoneId || whisperMicrophoneId === 'default') return undefined
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices()
+      const selected = devices.find(d => d.kind === 'audioinput' && d.deviceId === whisperMicrophoneId)
+      return selected?.label || undefined
+    } catch {
+      return undefined
+    }
+  }, [whisperMicrophoneId])
+
   const startPushToTalkRecording = React.useCallback(async () => {
     if (!pushToTalkWhisper || disabled || isDictating) return
+    if (isMac && window.electronAPI?.startNativePushToTalk) {
+      try {
+        const preferredDeviceLabel = await resolvePreferredMicLabelForNativePtt()
+        await window.electronAPI.startNativePushToTalk(preferredDeviceLabel)
+        setIsDictating(true)
+        toast.message('Listening… release Space to transcribe')
+        return
+      } catch (error) {
+        console.error('[FreeFormInput] Failed to start native push-to-talk:', error)
+        toast.error('Could not start native microphone capture')
+      }
+    }
     if (!navigator.mediaDevices?.getUserMedia) {
       toast.error('Microphone is not available in this environment')
       return
@@ -1241,15 +1269,20 @@ export function FreeFormInput({
     let stream: MediaStream | null = null
 
     try {
-      const audioConstraints = await getDefaultMicrophoneConstraints(whisperMicrophoneId)
-      stream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints })
+      stream = mediaStreamRef.current
+      const streamEnded = !!stream && stream.getTracks().every(track => track.readyState === 'ended')
+      if (!stream || streamEnded) {
+        const audioConstraints = await getDefaultMicrophoneConstraints(whisperMicrophoneId)
+        stream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints })
+        mediaStreamRef.current = stream
+      }
+
       const mimeType = getSupportedAudioMimeType()
       if (!mimeType) {
         throw new Error('This browser cannot record audio in a compatible format')
       }
 
       const recorder = new MediaRecorder(stream, { mimeType })
-      mediaStreamRef.current = stream
       mediaRecorderRef.current = recorder
       mediaChunksRef.current = []
 
@@ -1275,9 +1308,26 @@ export function FreeFormInput({
         pushToTalkTimerRef.current = null
       }
     }
-  }, [pushToTalkWhisper, disabled, isDictating, whisperMicrophoneId])
+  }, [pushToTalkWhisper, disabled, isDictating, whisperMicrophoneId, resolvePreferredMicLabelForNativePtt])
 
   const stopPushToTalkRecording = React.useCallback(async () => {
+    if (isMac && window.electronAPI?.stopNativePushToTalkAndTranscribe) {
+      try {
+        const transcript = await window.electronAPI.stopNativePushToTalkAndTranscribe()
+        const cleanTranscript = transcript.trim()
+        if (cleanTranscript.length > 0) {
+          insertTextAtCursor(`${cleanTranscript} `)
+        }
+      } catch (error) {
+        console.error('[FreeFormInput] Native whisper transcription failed:', error)
+        const message = error instanceof Error ? error.message : String(error)
+        toast.error(`Local Whisper transcription failed: ${message}`)
+      } finally {
+        setIsDictating(false)
+      }
+      return
+    }
+
     const recorder = mediaRecorderRef.current
     if (!recorder) return
 
@@ -1293,13 +1343,6 @@ export function FreeFormInput({
       recorder.stop()
     }
     mediaRecorderRef.current = null
-
-    if (mediaStreamRef.current) {
-      for (const track of mediaStreamRef.current.getTracks()) {
-        track.stop()
-      }
-      mediaStreamRef.current = null
-    }
 
     try {
       const audioBlob = await recordingDone
@@ -1321,6 +1364,16 @@ export function FreeFormInput({
       setIsDictating(false)
     }
   }, [insertTextAtCursor])
+
+  React.useEffect(() => {
+    if (pushToTalkWhisper) return
+    if (mediaStreamRef.current) {
+      for (const track of mediaStreamRef.current.getTracks()) {
+        track.stop()
+      }
+      mediaStreamRef.current = null
+    }
+  }, [pushToTalkWhisper])
 
   const handlePushToTalkRelease = React.useCallback((event?: KeyboardEvent | React.KeyboardEvent) => {
     if (!pushToTalkInterceptedRef.current) return

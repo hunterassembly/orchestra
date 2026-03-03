@@ -1,6 +1,6 @@
 import { app, ipcMain, nativeTheme, nativeImage, dialog, shell, BrowserWindow } from 'electron'
 import { appendFile, readFile, readdir, stat, realpath, mkdir, writeFile, unlink, rm } from 'fs/promises'
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync, mkdirSync, lstatSync } from 'node:fs'
 import { normalize, isAbsolute, join, basename, dirname, resolve, relative, sep } from 'path'
 import { homedir, tmpdir } from 'os'
 import { randomUUID } from 'crypto'
@@ -877,6 +877,166 @@ export function registerIpcHandlers(sessionManager: SessionManager, windowManage
     } catch {
       // Not a git repo, git not installed, or other error
       return null
+    }
+  })
+
+  // Get git repo metadata for a directory
+  ipcMain.handle(IPC_CHANNELS.GET_GIT_REPO_INFO, (_event, dirPath: string): import('../shared/types').GitRepoInfo | null => {
+    try {
+      const runGit = (args: string, timeout = 5000): string =>
+        execSync(`git ${args}`, {
+          cwd: dirPath,
+          encoding: 'utf-8',
+          stdio: ['pipe', 'pipe', 'pipe'],
+          timeout,
+        }).trim()
+
+      const repoRoot = runGit('rev-parse --show-toplevel')
+      const currentBranch = runGit('rev-parse --abbrev-ref HEAD')
+      if (!repoRoot || !currentBranch) return null
+
+      let trackingBranch: string | null = null
+      try {
+        trackingBranch = runGit('rev-parse --abbrev-ref --symbolic-full-name @{upstream}')
+      } catch {
+        trackingBranch = null
+      }
+
+      let branches: string[] = []
+      try {
+        branches = runGit("for-each-ref --format='%(refname:short)' refs/heads")
+          .split('\n')
+          .map((line) => line.trim().replace(/^'+|'+$/g, ''))
+          .filter(Boolean)
+          .sort((a, b) => a.localeCompare(b))
+      } catch {
+        branches = []
+      }
+
+      let repoName = basename(repoRoot)
+      try {
+        const remoteUrl = runGit('config --get remote.origin.url')
+        const normalized = remoteUrl
+          .replace(/\.git$/i, '')
+          .replace(/^git@[^:]+:/i, '')
+          .replace(/^https?:\/\/[^/]+\//i, '')
+        if (normalized.includes('/')) {
+          repoName = normalized
+        }
+      } catch {
+        // no-op
+      }
+
+      const gitPath = join(repoRoot, '.git')
+      const isWorktree = existsSync(gitPath) && lstatSync(gitPath).isFile()
+
+      return {
+        repoName,
+        repoRoot,
+        currentBranch,
+        trackingBranch,
+        branches,
+        isWorktree,
+        worktreeName: isWorktree ? basename(repoRoot) : null,
+      }
+    } catch {
+      return null
+    }
+  })
+
+  // Switch git branch for a directory
+  ipcMain.handle(IPC_CHANNELS.GIT_SWITCH_BRANCH, (_event, dirPath: string, branch: string): import('../shared/types').GitBranchSwitchResult => {
+    const targetBranch = branch?.trim()
+    if (!targetBranch) {
+      return { success: false, branch: null, error: 'Branch name is required' }
+    }
+
+    try {
+      const runGit = (args: string, timeout = 10000): string =>
+        execSync(`git ${args}`, {
+          cwd: dirPath,
+          encoding: 'utf-8',
+          stdio: ['pipe', 'pipe', 'pipe'],
+          timeout,
+        }).trim()
+      const branchExists = (ref: string): boolean => {
+        try {
+          runGit(`show-ref --verify --quiet ${JSON.stringify(ref)}`)
+          return true
+        } catch {
+          return false
+        }
+      }
+      const currentBranch = runGit('rev-parse --abbrev-ref HEAD')
+      const localBranch = targetBranch.startsWith('origin/') ? targetBranch.replace(/^origin\//, '') : targetBranch
+      const remoteBranch = targetBranch.startsWith('origin/') ? targetBranch : `origin/${targetBranch}`
+
+      if (currentBranch === targetBranch || currentBranch === localBranch) {
+        return { success: true, branch: currentBranch }
+      }
+
+      const hasLocalBranch = branchExists(`refs/heads/${localBranch}`)
+      const hasRemoteBranch = branchExists(`refs/remotes/${remoteBranch}`)
+
+      if (hasLocalBranch) {
+        runGit(`checkout ${JSON.stringify(localBranch)}`)
+      } else if (hasRemoteBranch) {
+        runGit(`checkout --track -b ${JSON.stringify(localBranch)} ${JSON.stringify(remoteBranch)}`)
+      } else {
+        return {
+          success: false,
+          branch: null,
+          error: `Branch not found: ${targetBranch}`,
+        }
+      }
+
+      const branchAfter = runGit('rev-parse --abbrev-ref HEAD')
+      return { success: true, branch: branchAfter }
+    } catch (error) {
+      const message = (error instanceof Error || typeof error === 'object')
+        ? (() => {
+            if (error instanceof Error) {
+              const stderr = (error as Error & { stderr?: string | Buffer }).stderr
+              if (typeof stderr === 'string' && stderr.trim()) return stderr.trim()
+              if (stderr && Buffer.isBuffer(stderr)) return stderr.toString('utf-8').trim()
+              return error.message
+            }
+            return 'Failed to switch git branch'
+          })()
+        : 'Failed to switch git branch'
+      return { success: false, branch: null, error: message }
+    }
+  })
+
+  // Get git status for a directory (returns list of changed files)
+  ipcMain.handle(IPC_CHANNELS.GET_GIT_DIFF_STAT, (_event, dirPath: string): import('../shared/types').GitDiffStat => {
+    try {
+      const output = execSync('git diff --numstat HEAD', {
+        cwd: dirPath,
+        encoding: 'utf-8',
+        stdio: ['pipe', 'pipe', 'pipe'],
+        timeout: 10000,
+      })
+
+      let added = 0
+      let deleted = 0
+      for (const line of output.split('\n')) {
+        if (!line.trim()) continue
+        const parts = line.split('\t')
+        const addPart = parts[0]
+        const delPart = parts[1]
+        if (addPart && addPart !== '-') {
+          const parsed = Number.parseInt(addPart, 10)
+          if (Number.isFinite(parsed)) added += parsed
+        }
+        if (delPart && delPart !== '-') {
+          const parsed = Number.parseInt(delPart, 10)
+          if (Number.isFinite(parsed)) deleted += parsed
+        }
+      }
+      return { added, deleted }
+    } catch {
+      return { added: 0, deleted: 0 }
     }
   })
 
@@ -3413,6 +3573,17 @@ export function registerIpcHandlers(sessionManager: SessionManager, windowManage
   ipcMain.handle(IPC_CHANNELS.INPUT_TRANSCRIBE_LOCAL_WHISPER, async (_event, audioBase64: string, mimeType: string) => {
     const { transcribeWithLocalWhisper } = await import('./local-whisper')
     return transcribeWithLocalWhisper(audioBase64, mimeType)
+  })
+
+  // Native macOS push-to-talk capture (avoids renderer MediaRecorder side effects)
+  ipcMain.handle(IPC_CHANNELS.INPUT_NATIVE_PTT_START, async (_event, preferredDeviceLabel?: string) => {
+    const { startNativePushToTalkCapture } = await import('./local-whisper')
+    return startNativePushToTalkCapture(preferredDeviceLabel)
+  })
+
+  ipcMain.handle(IPC_CHANNELS.INPUT_NATIVE_PTT_STOP_AND_TRANSCRIBE, async () => {
+    const { stopNativePushToTalkCaptureAndTranscribe } = await import('./local-whisper')
+    return stopNativePushToTalkCaptureAndTranscribe()
   })
 
   // Get keep awake while running setting

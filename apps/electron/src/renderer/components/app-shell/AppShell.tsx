@@ -523,12 +523,16 @@ function AppShellContent({
 
   // Right sidebar state (min 280, max 480)
   const [isRightSidebarVisible, setIsRightSidebarVisible] = React.useState(() => {
-    return storage.get(storage.KEYS.rightSidebarVisible, false)
+    const raw = storage.getRaw(storage.KEYS.rightSidebarVisible)
+    // Default to open for chat workflows unless user explicitly changed it.
+    if (raw === null) return true
+    return storage.get(storage.KEYS.rightSidebarVisible, true)
   })
   const [rightSidebarWidth, setRightSidebarWidth] = React.useState(() => {
     return clampRightSidebarWidth(storage.get(storage.KEYS.rightSidebarWidth, 300))
   })
   const [skipRightSidebarAnimation, setSkipRightSidebarAnimation] = React.useState(false)
+  const hasAutoOpenedChatSidebarRef = React.useRef(false)
 
   // Focus mode state - hides both sidebars for distraction-free chat
   // Can be enabled via prop (URL param for new windows) or toggled via Cmd+.
@@ -706,6 +710,8 @@ function AppShellContent({
   const chatDisplayRef = React.useRef<ChatDisplayHandle>(null)
   // Ref for opening files as tabs in the active chat (set by ChatPage)
   const openFileAsTabRef = React.useRef<((path: string) => void) | null>(null)
+  // Ref for opening workflow tabs in the active chat (set by ChatPage)
+  const openWorkflowTabRef = React.useRef<((workflow: { label: string; prompt: string; autoSend?: boolean }) => void) | null>(null)
   // Track match count and index from ChatDisplay (for SessionList navigation UI)
   const [chatMatchInfo, setChatMatchInfo] = React.useState<{ count: number; index: number }>({ count: 0, index: 0 })
 
@@ -748,6 +754,15 @@ function AppShellContent({
       // Reset skip flag after state update
       setTimeout(() => setSkipRightSidebarAnimation(false), 0)
     }
+  }, [navState])
+
+  // Open right sidebar by default for chat sessions (once per app run).
+  React.useEffect(() => {
+    if (!isSessionsNavigation(navState) || !navState.details) return
+    if (hasAutoOpenedChatSidebarRef.current) return
+
+    hasAutoOpenedChatSidebarRef.current = true
+    setIsRightSidebarVisible(true)
   }, [navState])
 
   // Self-heal invalid persisted width values so open can't get stuck "invisible".
@@ -1496,43 +1511,28 @@ function AppShellContent({
     return onDeleteSession(sessionId, skipConfirmation)
   }, [session.selected, setSession, onDeleteSession])
 
-  // Right sidebar OPEN button (fades out when sidebar is open, hidden in non-chat views)
+  // Right sidebar toggle button (stays anchored in panel header)
   const rightSidebarOpenButton = React.useMemo(() => {
     if (!isSessionsNavigation(navState) || !navState.details) return null
 
     return (
-      <motion.div
-        initial={false}
-        animate={{ opacity: isRightSidebarVisible ? 0 : 1 }}
-        transition={{ duration: 0.15 }}
-        style={{ pointerEvents: isRightSidebarVisible ? 'none' : 'auto' }}
-      >
-        <HeaderIconButton
-          icon={<PanelRightRounded className="h-5 w-6" />}
-          onClick={() => {
-            setRightSidebarWidth((prev) => clampRightSidebarWidth(prev))
-            setIsRightSidebarVisible(true)
-          }}
-          tooltip="Open sidebar"
-          className="text-foreground"
-        />
-      </motion.div>
-    )
-  }, [navState, isRightSidebarVisible])
-
-  // Right sidebar CLOSE button (shown in sidebar header when open)
-  const rightSidebarCloseButton = React.useMemo(() => {
-    if (!isRightSidebarVisible) return null
-
-    return (
       <HeaderIconButton
-        icon={<PanelLeftRounded className="h-5 w-6" />}
-        onClick={() => setIsRightSidebarVisible(false)}
-        tooltip="Close sidebar"
+        icon={isRightSidebarVisible
+          ? <PanelLeftRounded className="h-5 w-6" />
+          : <PanelRightRounded className="h-5 w-6" />}
+        onClick={() => {
+          if (isRightSidebarVisible) {
+            setIsRightSidebarVisible(false)
+            return
+          }
+          setRightSidebarWidth((prev) => clampRightSidebarWidth(prev))
+          setIsRightSidebarVisible(true)
+        }}
+        tooltip={isRightSidebarVisible ? 'Close sidebar' : 'Open sidebar'}
         className="text-foreground"
       />
     )
-  }, [isRightSidebarVisible])
+  }, [navState, isRightSidebarVisible])
 
   // Extend context value with local overrides (textareaRef, wrapped onDeleteSession, sources, skills, labels, enabledModes, rightSidebarOpenButton, effectiveSessionStatuses)
   const appShellContextValue = React.useMemo<AppShellContextType>(() => ({
@@ -1552,6 +1552,7 @@ function AppShellContent({
     isSearchModeActive: searchActive,
     chatDisplayRef,
     openFileAsTabRef,
+    openWorkflowTabRef,
     onChatMatchInfoChange: handleChatMatchInfoChange,
     onTestAutomation: handleTestAutomation,
     onToggleAutomation: handleToggleAutomation,
@@ -1843,34 +1844,6 @@ function AppShellContent({
     // Focus the chat input after navigation completes
     setTimeout(() => focusZone('chat', { intent: 'programmatic' }), 50)
   }, [activeWorkspace, onCreateSession, focusZone])
-
-  // Ensure the browser strip is populated by default on app launch.
-  const hasEnsuredDefaultBrowserRef = useRef(false)
-  useEffect(() => {
-    if (hasEnsuredDefaultBrowserRef.current) return
-    hasEnsuredDefaultBrowserRef.current = true
-
-    let cancelled = false
-    const ensureDefaultBrowser = async () => {
-      try {
-        const browserPaneApi = window.electronAPI?.browserPane
-        if (!browserPaneApi) return
-
-        const instances = await browserPaneApi.list()
-        if (cancelled || instances.length > 0) return
-
-        // Create hidden default browser so users always see a browser badge/tab immediately.
-        await browserPaneApi.create({ show: false })
-      } catch (error) {
-        console.warn('[AppShell] Failed to ensure default browser window:', error)
-      }
-    }
-
-    void ensureDefaultBrowser()
-    return () => {
-      cancelled = true
-    }
-  }, [])
 
   // Delete Source - simplified since agents system is removed
   const handleDeleteSource = useCallback(async (sourceSlug: string) => {
@@ -3419,7 +3392,6 @@ function AppShellContent({
                   <RightSidebar
                     panel={{ type: 'files' }}
                     sessionId={isSessionsNavigation(navState) && navState.details ? navState.details.sessionId : undefined}
-                    closeButton={rightSidebarCloseButton}
                   />
                 </motion.div>
               </motion.div>
@@ -3452,7 +3424,6 @@ function AppShellContent({
                       <RightSidebar
                         panel={{ type: 'files' }}
                         sessionId={isSessionsNavigation(navState) && navState.details ? navState.details.sessionId : undefined}
-                        closeButton={rightSidebarCloseButton}
                       />
                     </div>
                   </motion.div>

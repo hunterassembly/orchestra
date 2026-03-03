@@ -102,6 +102,8 @@ export interface AppShellContextType {
   onOpenFile: (path: string) => void
   /** Ref to the active chat's file-as-tab handler (set by ChatPage, used by sidebar) */
   openFileAsTabRef?: React.MutableRefObject<((path: string) => void) | null>
+  /** Ref to open workflow tabs in the active chat (review / commit / PR helpers) */
+  openWorkflowTabRef?: React.MutableRefObject<((workflow: { label: string; prompt: string; autoSend?: boolean }) => void) | null>
   onOpenUrl: (url: string) => void
   onOpenDiff: (filePath: string, unifiedDiff: string) => void
 

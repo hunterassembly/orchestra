@@ -121,6 +121,27 @@ export interface GitStatusEntry {
   staged: boolean
 }
 
+export interface GitDiffStat {
+  added: number
+  deleted: number
+}
+
+export interface GitBranchSwitchResult {
+  success: boolean
+  branch: string | null
+  error?: string
+}
+
+export interface GitRepoInfo {
+  repoName: string
+  repoRoot: string
+  currentBranch: string
+  trackingBranch: string | null
+  branches: string[]
+  isWorktree: boolean
+  worktreeName: string | null
+}
+
 /**
  * File search result for @ mention file selection.
  * Returned by FS_SEARCH IPC handler when user types @filename in input.
@@ -871,6 +892,8 @@ export const IPC_CHANNELS = {
   INPUT_SET_PUSH_TO_TALK_WHISPER: 'input:setPushToTalkWhisper',
   INPUT_GET_WHISPER_MICROPHONE_ID: 'input:getWhisperMicrophoneId',
   INPUT_SET_WHISPER_MICROPHONE_ID: 'input:setWhisperMicrophoneId',
+  INPUT_NATIVE_PTT_START: 'input:nativePttStart',
+  INPUT_NATIVE_PTT_STOP_AND_TRANSCRIBE: 'input:nativePttStopAndTranscribe',
   INPUT_TRANSCRIBE_LOCAL_WHISPER: 'input:transcribeLocalWhisper',
 
   // Power settings
@@ -896,6 +919,9 @@ export const IPC_CHANNELS = {
 
   // Git operations
   GET_GIT_BRANCH: 'git:getBranch',
+  GET_GIT_REPO_INFO: 'git:getRepoInfo',
+  GIT_SWITCH_BRANCH: 'git:switchBranch',
+  GET_GIT_DIFF_STAT: 'git:getDiffStat',
   GET_GIT_STATUS: 'git:getStatus',
   GET_GIT_DIFF: 'git:getDiff',
 
@@ -1255,6 +1281,8 @@ export interface ElectronAPI {
   setPushToTalkWhisper(enabled: boolean): Promise<void>
   getWhisperMicrophoneId(): Promise<string>
   setWhisperMicrophoneId(deviceId: string): Promise<void>
+  startNativePushToTalk(preferredDeviceLabel?: string): Promise<void>
+  stopNativePushToTalkAndTranscribe(): Promise<string>
   transcribeWithLocalWhisper(audioBase64: string, mimeType: string): Promise<string>
 
   // Power settings
@@ -1283,6 +1311,9 @@ export interface ElectronAPI {
 
   // Git operations
   getGitBranch(dirPath: string): Promise<string | null>
+  getGitRepoInfo(dirPath: string): Promise<GitRepoInfo | null>
+  switchGitBranch(dirPath: string, branch: string): Promise<GitBranchSwitchResult>
+  getGitDiffStat(dirPath: string): Promise<GitDiffStat>
   getGitStatus(dirPath: string): Promise<GitStatusEntry[]>
   getGitDiff(dirPath: string, filePath: string): Promise<string>
 

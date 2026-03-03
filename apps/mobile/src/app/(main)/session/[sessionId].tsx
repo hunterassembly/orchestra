@@ -1,5 +1,4 @@
 import type {
-  CredentialInputModeDTO,
   CredentialRequestDTO,
   CredentialResponseDTO,
   PermissionModeDTO,
@@ -19,6 +18,7 @@ import {
   KeyboardAvoidingView,
   Platform,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   View,
@@ -30,6 +30,16 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { createRuntimeApiClient } from "@/api/runtime-client";
 import { createInMemorySseCursorStore, createSseClient, type MobileSseClient } from "@/api/sse-client";
 import { Badge, Button, ConnectionChip, TextInput } from "@/components/ui";
+import {
+  buildCredentialResponse,
+  createCredentialFormValues,
+  credentialMode,
+  deriveFileName,
+  formatBytes,
+  guessMimeType,
+  isCancelledError,
+  type CredentialFormValues,
+} from "@/features/session/parity-utils";
 import { authStore, useAuthStore } from "@/state/auth-store";
 import { type SessionMessage } from "@/state/session-types";
 import { useSessionsStore } from "@/state/sessions";
@@ -52,12 +62,7 @@ type RequestActionState = {
   error: string | null;
 };
 
-type CredentialFormState = RequestActionState & {
-  value: string;
-  username: string;
-  password: string;
-  headers: Record<string, string>;
-};
+type CredentialFormState = RequestActionState & CredentialFormValues;
 
 type AttachmentDraft = {
   localId: string;
@@ -69,6 +74,72 @@ type AttachmentDraft = {
   attachmentId?: string;
   error: string | null;
 };
+
+function attachmentStatusLabel(status: AttachmentDraft["status"]): string {
+  if (status === "uploading") {
+    return "Uploading";
+  }
+  if (status === "ready") {
+    return "Ready";
+  }
+
+  return "Failed";
+}
+
+function attachmentStatusBadgeVariant(status: AttachmentDraft["status"]): "default" | "secondary" | "destructive" | "outline" {
+  if (status === "ready") {
+    return "default";
+  }
+
+  if (status === "uploading") {
+    return "secondary";
+  }
+
+  return "destructive";
+}
+
+function attachmentKindLabel(mimeType: string, name: string): string {
+  const normalizedMime = mimeType.toLowerCase();
+  const normalizedName = name.toLowerCase();
+
+  if (normalizedMime.startsWith("image/")) {
+    return "Image";
+  }
+  if (normalizedMime === "application/pdf" || normalizedName.endsWith(".pdf")) {
+    return "PDF";
+  }
+  if (normalizedMime.startsWith("audio/")) {
+    return "Audio";
+  }
+  if (normalizedMime.startsWith("video/")) {
+    return "Video";
+  }
+  if (
+    normalizedMime.includes("zip")
+    || normalizedMime.includes("tar")
+    || normalizedMime.includes("gzip")
+    || normalizedMime.includes("7z")
+    || normalizedMime.includes("rar")
+    || /\.(zip|tar|gz|tgz|7z|rar)$/u.test(normalizedName)
+  ) {
+    return "Archive";
+  }
+  if (
+    normalizedMime.startsWith("text/")
+    || normalizedMime.includes("json")
+    || normalizedMime.includes("xml")
+    || normalizedMime.includes("javascript")
+    || normalizedMime.includes("typescript")
+    || normalizedMime.includes("yaml")
+    || normalizedMime.includes("toml")
+    || normalizedMime.includes("shellscript")
+    || /\.(txt|md|json|xml|yml|yaml|toml|sh|zsh|bash|js|jsx|ts|tsx|cjs|mjs|py|rb|go|rs|swift|kt|java|c|cc|cpp|h|hpp|css|scss|html)$/u.test(normalizedName)
+  ) {
+    return "Code/Text";
+  }
+
+  return "File";
+}
 
 function toSessionId(value: string | string[] | undefined): string | null {
   if (!value) {
@@ -95,14 +166,6 @@ function toUserMessage(error: unknown): string {
   return "Unable to complete request.";
 }
 
-function isCancelledError(error: unknown): boolean {
-  if (!(error instanceof Error)) {
-    return false;
-  }
-
-  const normalized = error.message.toLowerCase();
-  return normalized.includes("cancel");
-}
 
 function connectionTone(
   streamState: "connecting" | "connected" | "reconnecting" | "offline",
@@ -315,76 +378,9 @@ function clampInput(value: string): string {
   return value.replace(/\s+$/u, (match) => match.replace(/\n+$/u, "\n"));
 }
 
-function formatBytes(size: number): string {
-  if (!Number.isFinite(size) || size <= 0) {
-    return "0 B";
-  }
-
-  if (size < 1024) {
-    return `${size} B`;
-  }
-
-  if (size < 1024 * 1024) {
-    return `${(size / 1024).toFixed(1)} KB`;
-  }
-
-  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-function deriveFileName(uri: string): string {
-  const candidate = uri.split("/").pop() ?? "";
-  if (!candidate) {
-    return `attachment-${Date.now()}`;
-  }
-
-  try {
-    return decodeURIComponent(candidate);
-  } catch {
-    return candidate;
-  }
-}
-
-function guessMimeType(name: string, fallback: string): string {
-  if (fallback.trim().length > 0) {
-    return fallback;
-  }
-
-  const normalized = name.trim().toLowerCase();
-  if (normalized.endsWith(".png")) return "image/png";
-  if (normalized.endsWith(".jpg") || normalized.endsWith(".jpeg")) return "image/jpeg";
-  if (normalized.endsWith(".webp")) return "image/webp";
-  if (normalized.endsWith(".gif")) return "image/gif";
-  if (normalized.endsWith(".pdf")) return "application/pdf";
-  if (normalized.endsWith(".md")) return "text/markdown";
-  if (normalized.endsWith(".json")) return "application/json";
-  if (normalized.endsWith(".txt")) return "text/plain";
-
-  return "application/octet-stream";
-}
-
-function credentialMode(request: CredentialRequestDTO): CredentialInputModeDTO {
-  return request.inputMode ?? "bearer";
-}
-
 function createCredentialFormState(request: CredentialRequestDTO): CredentialFormState {
-  const headers: Record<string, string> = {};
-
-  const explicitHeaders = request.headerNames ?? [];
-  for (const header of explicitHeaders) {
-    if (header.trim().length > 0) {
-      headers[header] = "";
-    }
-  }
-
-  if (request.headerName && request.headerName.trim().length > 0 && !(request.headerName in headers)) {
-    headers[request.headerName] = "";
-  }
-
   return {
-    value: "",
-    username: "",
-    password: "",
-    headers,
+    ...createCredentialFormValues(request),
     isSubmitting: false,
     error: null,
   };
@@ -537,6 +533,23 @@ export default function SessionScreen() {
     return items;
   }, [credentialRequests, messages, permissionRequests]);
 
+  const readyAttachmentDrafts = useMemo(
+    () => attachmentDrafts.filter((draft) => draft.status === "ready" && typeof draft.attachmentId === "string"),
+    [attachmentDrafts],
+  );
+  const readyAttachmentIds = useMemo(
+    () => readyAttachmentDrafts.map((draft) => draft.attachmentId as string),
+    [readyAttachmentDrafts],
+  );
+  const uploadingAttachmentCount = useMemo(
+    () => attachmentDrafts.filter((draft) => draft.status === "uploading").length,
+    [attachmentDrafts],
+  );
+  const failedAttachmentCount = useMemo(
+    () => attachmentDrafts.filter((draft) => draft.status === "error").length,
+    [attachmentDrafts],
+  );
+
   const fetchSessionDetail = useCallback(async () => {
     if (!sessionId || !client) {
       setIsLoading(false);
@@ -688,15 +701,17 @@ export default function SessionScreen() {
       return;
     }
 
+    if (uploadingAttachmentCount > 0) {
+      setErrorMessage("Wait for attachment uploads to finish before sending.");
+      return;
+    }
+
     const text = clampInput(composerText).trim();
     if (!text) {
       return;
     }
 
     const optimisticId = `optimistic-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-    const readyAttachmentIds = attachmentDrafts
-      .filter((draft) => draft.status === "ready" && typeof draft.attachmentId === "string")
-      .map((draft) => draft.attachmentId as string);
     const payload: PendingSend = {
       optimisticId,
       text,
@@ -715,7 +730,7 @@ export default function SessionScreen() {
     } finally {
       setIsSending(false);
     }
-  }, [attachmentDrafts, composerText, isSending, scrollToBottom, sendWithQueue, sessionId]);
+  }, [composerText, isSending, readyAttachmentIds, scrollToBottom, sendWithQueue, sessionId, uploadingAttachmentCount]);
 
   const handleInterrupt = useCallback(async () => {
     if (!sessionId || !client || isInterrupting) {
@@ -971,66 +986,16 @@ export default function SessionScreen() {
 
   const submitCredentialRequest = useCallback(async (request: CredentialRequestDTO) => {
     const currentState = credentialFormById[request.requestId] ?? createCredentialFormState(request);
-    const mode = credentialMode(request);
-
-    let response: CredentialResponseDTO;
-    if (mode === "basic") {
-      const username = currentState.username.trim();
-      const password = currentState.password.trim();
-      if (username.length === 0 || (request.passwordRequired !== false && password.length === 0)) {
-        updateCredentialForm(request, (state) => ({
-          ...state,
-          error: "Username and password are required.",
-        }));
-        return;
-      }
-
-      response = {
-        type: "credential",
-        username,
-        password,
-        cancelled: false,
-      };
-    } else if (mode === "multi-header") {
-      const headers = Object.entries(currentState.headers).reduce<Record<string, string>>((acc, [key, value]) => {
-        const nextValue = value.trim();
-        if (nextValue.length > 0) {
-          acc[key] = nextValue;
-        }
-        return acc;
-      }, {});
-
-      if (Object.keys(headers).length === 0) {
-        updateCredentialForm(request, (state) => ({
-          ...state,
-          error: "Enter at least one credential header value.",
-        }));
-        return;
-      }
-
-      response = {
-        type: "credential",
-        headers,
-        cancelled: false,
-      };
-    } else {
-      const value = currentState.value.trim();
-      if (value.length === 0) {
-        updateCredentialForm(request, (state) => ({
-          ...state,
-          error: "Credential value is required.",
-        }));
-        return;
-      }
-
-      response = {
-        type: "credential",
-        value,
-        cancelled: false,
-      };
+    const result = buildCredentialResponse(request, currentState);
+    if (!result.response) {
+      updateCredentialForm(request, (state) => ({
+        ...state,
+        error: result.error ?? "Credential value is required.",
+      }));
+      return;
     }
 
-    await respondToCredentialRequest(request, response);
+    await respondToCredentialRequest(request, result.response);
   }, [credentialFormById, respondToCredentialRequest, updateCredentialForm]);
 
   const uploadAttachmentDraft = useCallback(async (draft: AttachmentDraft) => {
@@ -1099,6 +1064,10 @@ export default function SessionScreen() {
 
   const removeAttachmentDraft = useCallback((localId: string) => {
     setAttachmentDrafts((current) => current.filter((draft) => draft.localId !== localId));
+  }, []);
+
+  const clearFailedAttachmentDrafts = useCallback(() => {
+    setAttachmentDrafts((current) => current.filter((draft) => draft.status !== "error"));
   }, []);
 
   const showAttachmentPicker = useCallback(() => {
@@ -1427,11 +1396,53 @@ export default function SessionScreen() {
           gap: theme.spacing.xs,
           marginBottom: theme.spacing.xs,
         },
+        requestHeader: {
+          alignItems: "center",
+          flexDirection: "row",
+          justifyContent: "space-between",
+          marginBottom: theme.spacing.xs,
+        },
+        requestId: {
+          color: theme.colors.info,
+          fontFamily: theme.typography.mono.fontFamily,
+          fontSize: theme.typography.fontSize.xs,
+          fontWeight: theme.typography.mono.fontWeight,
+          lineHeight: theme.typography.mono.lineHeight,
+          opacity: 0.85,
+        },
+        requestCommandWrap: {
+          backgroundColor: theme.colors.background,
+          borderColor: theme.colors.navigator,
+          borderRadius: theme.radius.sm,
+          borderWidth: 1,
+          gap: theme.spacing.xs,
+          marginTop: theme.spacing.xs,
+          paddingHorizontal: theme.spacing.xs,
+          paddingVertical: theme.spacing.xs,
+        },
         requestActions: {
           flexDirection: "row",
           flexWrap: "wrap",
           gap: theme.spacing.xs,
           marginTop: theme.spacing.sm,
+        },
+        requestSourceUrl: {
+          color: theme.colors.info,
+          fontFamily: theme.typography.mono.fontFamily,
+          fontSize: theme.typography.fontSize.xs,
+          fontWeight: theme.typography.mono.fontWeight,
+          lineHeight: theme.typography.mono.lineHeight,
+          marginTop: theme.spacing.xs,
+          opacity: 0.85,
+        },
+        requestTipText: {
+          color: theme.colors.info,
+          fontFamily: theme.typography.mono.fontFamily,
+          fontSize: theme.typography.fontSize.xs,
+          fontWeight: theme.typography.mono.fontWeight,
+          lineHeight: theme.typography.mono.lineHeight,
+          marginTop: theme.spacing.xs,
+          opacity: 0.8,
         },
         requestErrorText: {
           color: theme.colors.destructive,
@@ -1444,6 +1455,18 @@ export default function SessionScreen() {
         credentialForm: {
           gap: theme.spacing.xs,
           marginTop: theme.spacing.sm,
+        },
+        fieldBlock: {
+          gap: theme.spacing.xs,
+        },
+        fieldLabel: {
+          color: theme.colors.foreground,
+          fontFamily: theme.typography.mono.fontFamily,
+          fontSize: theme.typography.fontSize.xs,
+          fontWeight: "700",
+          lineHeight: theme.typography.mono.lineHeight,
+          opacity: 0.8,
+          textTransform: "uppercase",
         },
         jumpToLiveWrap: {
           alignItems: "center",
@@ -1459,20 +1482,37 @@ export default function SessionScreen() {
           paddingHorizontal: theme.spacing.sm,
           paddingVertical: theme.spacing.xs,
         },
-        attachmentRow: {
+        attachmentQueueHeader: {
           alignItems: "center",
+          flexDirection: "row",
+          justifyContent: "space-between",
+        },
+        attachmentQueueSummary: {
+          color: theme.colors.info,
+          flex: 1,
+          fontFamily: theme.typography.mono.fontFamily,
+          fontSize: theme.typography.fontSize.xs,
+          fontWeight: theme.typography.mono.fontWeight,
+          lineHeight: theme.typography.mono.lineHeight,
+        },
+        attachmentStrip: {
+          gap: theme.spacing.xs,
+          paddingRight: theme.spacing.sm,
+        },
+        attachmentCard: {
           borderColor: theme.colors.navigator,
           borderRadius: theme.radius.md,
           borderWidth: 1,
-          flexDirection: "row",
           gap: theme.spacing.xs,
-          justifyContent: "space-between",
+          minWidth: 220,
+          maxWidth: 260,
           paddingHorizontal: theme.spacing.sm,
           paddingVertical: theme.spacing.xs,
         },
-        attachmentMeta: {
-          flex: 1,
-          gap: 2,
+        attachmentCardHeader: {
+          alignItems: "center",
+          flexDirection: "row",
+          justifyContent: "space-between",
         },
         attachmentName: {
           color: theme.colors.foreground,
@@ -1480,6 +1520,14 @@ export default function SessionScreen() {
           fontSize: theme.typography.fontSize.sm,
           fontWeight: "700",
           lineHeight: theme.typography.body.lineHeight,
+        },
+        attachmentKind: {
+          color: theme.colors.info,
+          fontFamily: theme.typography.mono.fontFamily,
+          fontSize: theme.typography.fontSize.xs,
+          fontWeight: "700",
+          lineHeight: theme.typography.mono.lineHeight,
+          textTransform: "uppercase",
         },
         attachmentDetail: {
           color: theme.colors.info,
@@ -1489,9 +1537,35 @@ export default function SessionScreen() {
           lineHeight: theme.typography.mono.lineHeight,
         },
         attachmentActions: {
+          flexDirection: "row",
+          gap: theme.spacing.xs,
+          marginTop: theme.spacing.xs,
+        },
+        attachmentUploading: {
           alignItems: "center",
           flexDirection: "row",
           gap: theme.spacing.xs,
+        },
+        attachmentUploadingText: {
+          color: theme.colors.info,
+          fontFamily: theme.typography.mono.fontFamily,
+          fontSize: theme.typography.fontSize.xs,
+          fontWeight: theme.typography.mono.fontWeight,
+          lineHeight: theme.typography.mono.lineHeight,
+        },
+        composerStatusBar: {
+          backgroundColor: theme.colors.paper,
+          borderTopColor: theme.colors.navigator,
+          borderTopWidth: 1,
+          paddingHorizontal: theme.spacing.md,
+          paddingVertical: theme.spacing.xs,
+        },
+        composerStatusText: {
+          color: theme.colors.info,
+          fontFamily: theme.typography.mono.fontFamily,
+          fontSize: theme.typography.fontSize.xs,
+          fontWeight: theme.typography.mono.fontWeight,
+          lineHeight: theme.typography.mono.lineHeight,
         },
         composerWrap: {
           backgroundColor: theme.colors.paper,
@@ -1674,13 +1748,21 @@ export default function SessionScreen() {
     return (
       <View style={[styles.rowBase, styles.rowStatus]}>
         <View style={[styles.bubbleBase, styles.bubbleWarning]}>
-          <Text style={[styles.eventLabel, styles.eventLabelWarning]}>Permission Request</Text>
+          <View style={styles.requestHeader}>
+            <Text style={[styles.eventLabel, styles.eventLabelWarning]}>Permission Request</Text>
+            <Text style={styles.requestId}>{request.requestId}</Text>
+          </View>
           <View style={styles.requestBadgeRow}>
             <Badge variant="outline">{request.toolName || "Tool"}</Badge>
             {request.type ? <Badge variant="secondary">{request.type}</Badge> : null}
           </View>
           <Text style={styles.messageText}>{request.description}</Text>
-          {request.command ? <Text style={styles.codeText}>{request.command}</Text> : null}
+          {request.command ? (
+            <View style={styles.requestCommandWrap}>
+              <Text style={styles.sectionLabel}>Command Preview</Text>
+              <Text style={styles.codeText}>{request.command}</Text>
+            </View>
+          ) : null}
 
           <View style={styles.requestActions}>
             <Button
@@ -1725,6 +1807,7 @@ export default function SessionScreen() {
               Allow 15m
             </Button>
           </View>
+          <Text style={styles.requestTipText}>Allow 15m remembers this command for a short window.</Text>
 
           {actionState.error ? <Text style={styles.requestErrorText}>{actionState.error}</Text> : null}
           {actionState.isSubmitting ? <Text style={styles.pendingText}>Submitting...</Text> : null}
@@ -1737,6 +1820,8 @@ export default function SessionScreen() {
     const mode = credentialMode(request);
     const formState = credentialFormById[request.requestId] ?? createCredentialFormState(request);
     const submitting = formState.isSubmitting;
+    const previewSubmission = buildCredentialResponse(request, formState);
+    const submitDisabled = submitting || previewSubmission.error !== null;
 
     const headerKeys = Object.keys(formState.headers).length > 0
       ? Object.keys(formState.headers)
@@ -1745,82 +1830,106 @@ export default function SessionScreen() {
         : request.headerName
           ? [request.headerName]
           : ["Authorization"];
+    const credentialLabel =
+      request.labels?.credential
+      ?? (mode === "bearer" ? "Bearer Token" : request.headerName ?? "Credential value");
+    const usernameLabel = request.labels?.username ?? "Username";
+    const passwordLabel = request.labels?.password ?? "Password";
 
     return (
       <View style={[styles.rowBase, styles.rowStatus]}>
         <View style={[styles.bubbleBase, styles.bubbleInfo]}>
-          <Text style={[styles.eventLabel, styles.eventLabelInfo]}>Credential Request</Text>
+          <View style={styles.requestHeader}>
+            <Text style={[styles.eventLabel, styles.eventLabelInfo]}>Credential Request</Text>
+            <Text style={styles.requestId}>{request.requestId}</Text>
+          </View>
           <View style={styles.requestBadgeRow}>
             <Badge variant="outline">{request.sourceName ?? request.sourceSlug ?? "Source"}</Badge>
             <Badge variant="secondary">{mode}</Badge>
           </View>
 
           {request.description ? <Text style={styles.messageText}>{request.description}</Text> : null}
+          {request.sourceUrl ? <Text numberOfLines={1} style={styles.requestSourceUrl}>{request.sourceUrl}</Text> : null}
           {request.hint ? <Text style={styles.intermediateText}>{request.hint}</Text> : null}
 
           <View style={styles.credentialForm}>
             {mode === "basic" ? (
               <>
-                <ThemedTextInput
-                  autoCapitalize="none"
-                  onChangeText={(value: string) => {
-                    updateCredentialForm(request, (state) => ({
-                      ...state,
-                      username: value,
-                      error: null,
-                    }));
-                  }}
-                  placeholder={request.labels?.username ?? "Username"}
-                  value={formState.username}
-                />
-                <ThemedTextInput
-                  autoCapitalize="none"
-                  onChangeText={(value: string) => {
-                    updateCredentialForm(request, (state) => ({
-                      ...state,
-                      password: value,
-                      error: null,
-                    }));
-                  }}
-                  placeholder={request.labels?.password ?? "Password"}
-                  secureTextEntry
-                  value={formState.password}
-                />
+                <View style={styles.fieldBlock}>
+                  <Text style={styles.fieldLabel}>{usernameLabel}</Text>
+                  <ThemedTextInput
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    onChangeText={(value: string) => {
+                      updateCredentialForm(request, (state) => ({
+                        ...state,
+                        username: value,
+                        error: null,
+                      }));
+                    }}
+                    placeholder={`Enter ${usernameLabel.toLowerCase()}`}
+                    value={formState.username}
+                  />
+                </View>
+                <View style={styles.fieldBlock}>
+                  <Text style={styles.fieldLabel}>{passwordLabel}</Text>
+                  <ThemedTextInput
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    onChangeText={(value: string) => {
+                      updateCredentialForm(request, (state) => ({
+                        ...state,
+                        password: value,
+                        error: null,
+                      }));
+                    }}
+                    placeholder={`Enter ${passwordLabel.toLowerCase()}`}
+                    secureTextEntry
+                    value={formState.password}
+                  />
+                </View>
               </>
             ) : mode === "multi-header" ? (
               <>
                 {headerKeys.map((headerKey) => (
-                  <ThemedTextInput
-                    autoCapitalize="none"
-                    key={`${request.requestId}:${headerKey}`}
-                    onChangeText={(value: string) => {
-                      updateCredentialForm(request, (state) => ({
-                        ...state,
-                        headers: {
-                          ...state.headers,
-                          [headerKey]: value,
-                        },
-                        error: null,
-                      }));
-                    }}
-                    placeholder={`${headerKey} value`}
-                    value={formState.headers[headerKey] ?? ""}
-                  />
+                  <View key={`${request.requestId}:${headerKey}`} style={styles.fieldBlock}>
+                    <Text style={styles.fieldLabel}>{headerKey}</Text>
+                    <ThemedTextInput
+                      autoCapitalize="none"
+                      autoCorrect={false}
+                      onChangeText={(value: string) => {
+                        updateCredentialForm(request, (state) => ({
+                          ...state,
+                          headers: {
+                            ...state.headers,
+                            [headerKey]: value,
+                          },
+                          error: null,
+                        }));
+                      }}
+                      placeholder={`Enter ${headerKey}`}
+                      value={formState.headers[headerKey] ?? ""}
+                    />
+                  </View>
                 ))}
               </>
             ) : (
-              <ThemedTextInput
-                autoCapitalize="none"
-                onChangeText={(value: string) => {
-                  updateCredentialForm(request, (state) => ({
-                    ...state,
-                    value,
-                    error: null,
-                  }));
-                }}
-                placeholder={request.labels?.credential ?? "Credential value"}
-                value={formState.value}
-              />
+              <View style={styles.fieldBlock}>
+                <Text style={styles.fieldLabel}>{credentialLabel}</Text>
+                <ThemedTextInput
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  onChangeText={(value: string) => {
+                    updateCredentialForm(request, (state) => ({
+                      ...state,
+                      value,
+                      error: null,
+                    }));
+                  }}
+                  placeholder={`Enter ${credentialLabel.toLowerCase()}`}
+                  value={formState.value}
+                />
+              </View>
             )}
           </View>
 
@@ -1839,7 +1948,7 @@ export default function SessionScreen() {
               Cancel
             </Button>
             <Button
-              disabled={submitting}
+              disabled={submitDisabled}
               onPress={() => {
                 void submitCredentialRequest(request);
               }}
@@ -1848,6 +1957,7 @@ export default function SessionScreen() {
               Submit
             </Button>
           </View>
+          <Text style={styles.requestTipText}>Credentials are encrypted at rest on the runtime host.</Text>
 
           {formState.error ? <Text style={styles.requestErrorText}>{formState.error}</Text> : null}
           {submitting ? <Text style={styles.pendingText}>Submitting...</Text> : null}
@@ -1870,6 +1980,8 @@ export default function SessionScreen() {
 
   const currentConnectionTone = connectionTone(streamState, Boolean(errorMessage));
   const statusLabel = sessionStatusLabel(session);
+  const composerTextValue = clampInput(composerText).trim();
+  const sendDisabled = isSending || uploadingAttachmentCount > 0 || composerTextValue.length === 0;
 
   return (
     <SafeAreaView edges={["top", "bottom"]} style={styles.safeArea}>
@@ -1986,43 +2098,91 @@ export default function SessionScreen() {
 
         {attachmentDrafts.length > 0 ? (
           <View style={styles.attachmentQueue}>
-            {attachmentDrafts.map((attachment) => (
-              <View key={attachment.localId} style={styles.attachmentRow}>
-                <View style={styles.attachmentMeta}>
-                  <Text numberOfLines={1} style={styles.attachmentName}>
+            <View style={styles.attachmentQueueHeader}>
+              <Text style={styles.attachmentQueueSummary}>
+                {readyAttachmentIds.length} ready · {uploadingAttachmentCount} uploading · {failedAttachmentCount} failed
+              </Text>
+              {failedAttachmentCount > 0 ? (
+                <Button
+                  onPress={() => clearFailedAttachmentDrafts()}
+                  size="sm"
+                  variant="ghost"
+                >
+                  Clear Failed
+                </Button>
+              ) : null}
+            </View>
+            <ScrollView
+              contentContainerStyle={styles.attachmentStrip}
+              horizontal
+              showsHorizontalScrollIndicator={false}
+            >
+              {attachmentDrafts.map((attachment) => (
+                <View key={attachment.localId} style={styles.attachmentCard}>
+                  <View style={styles.attachmentCardHeader}>
+                    <Badge variant={attachmentStatusBadgeVariant(attachment.status)}>
+                      {attachmentStatusLabel(attachment.status)}
+                    </Badge>
+                    <Text numberOfLines={1} style={styles.attachmentKind}>
+                      {attachmentKindLabel(attachment.mimeType, attachment.name)}
+                    </Text>
+                  </View>
+                  <Text numberOfLines={2} style={styles.attachmentName}>
                     {attachment.name}
                   </Text>
                   <Text numberOfLines={1} style={styles.attachmentDetail}>
-                    {formatBytes(attachment.size)} · {attachment.status}
+                    {formatBytes(attachment.size)} · {attachment.mimeType}
                   </Text>
                   {attachment.error ? <Text style={styles.requestErrorText}>{attachment.error}</Text> : null}
-                </View>
-
-                <View style={styles.attachmentActions}>
-                  {attachment.status === "error" ? (
+                  <View style={styles.attachmentActions}>
+                    {attachment.status === "uploading" ? (
+                      <View style={styles.attachmentUploading}>
+                        <ActivityIndicator color={theme.colors.accent} size="small" />
+                        <Text style={styles.attachmentUploadingText}>Uploading</Text>
+                      </View>
+                    ) : null}
+                    {attachment.status === "error" ? (
+                      <Button
+                        onPress={() => retryAttachmentUpload(attachment.localId)}
+                        size="sm"
+                        variant="outline"
+                      >
+                        Retry
+                      </Button>
+                    ) : null}
                     <Button
-                      onPress={() => retryAttachmentUpload(attachment.localId)}
+                      onPress={() => removeAttachmentDraft(attachment.localId)}
                       size="sm"
-                      variant="outline"
+                      variant="ghost"
                     >
-                      Retry
+                      Remove
                     </Button>
-                  ) : null}
-                  <Button
-                    onPress={() => removeAttachmentDraft(attachment.localId)}
-                    size="sm"
-                    variant="ghost"
-                  >
-                    Remove
-                  </Button>
+                  </View>
                 </View>
-              </View>
-            ))}
+              ))}
+            </ScrollView>
+          </View>
+        ) : null}
+
+        {(attachmentDrafts.length > 0 || pendingQueue.length > 0) ? (
+          <View style={styles.composerStatusBar}>
+            <Text style={styles.composerStatusText}>
+              {uploadingAttachmentCount > 0
+                ? `Uploading ${uploadingAttachmentCount} attachment${uploadingAttachmentCount === 1 ? "" : "s"}`
+                : readyAttachmentIds.length > 0
+                  ? `${readyAttachmentIds.length} attachment${readyAttachmentIds.length === 1 ? "" : "s"} ready`
+                  : "No attachments ready"}
+            </Text>
           </View>
         ) : null}
 
         <View style={styles.composerWrap}>
-          <Button onPress={() => showAttachmentPicker()} size="icon" variant="outline">
+          <Button
+            disabled={isSending}
+            onPress={() => showAttachmentPicker()}
+            size="icon"
+            variant="outline"
+          >
             +
           </Button>
 
@@ -2031,7 +2191,7 @@ export default function SessionScreen() {
               multiline
               onChangeText={setComposerText}
               onSubmitEditing={() => {
-                if (!isProcessing) {
+                if (!isProcessing && !sendDisabled) {
                   void handleSend();
                 }
               }}
@@ -2052,11 +2212,15 @@ export default function SessionScreen() {
             </Button>
           ) : (
             <Button
-              disabled={isSending || clampInput(composerText).trim().length === 0}
+              disabled={sendDisabled}
               onPress={() => void handleSend()}
               size="default"
             >
-              {isSending ? <ActivityIndicator color={theme.colors.background} /> : "Send"}
+              {isSending
+                ? <ActivityIndicator color={theme.colors.background} />
+                : uploadingAttachmentCount > 0
+                  ? "Uploading"
+                  : "Send"}
             </Button>
           )}
         </View>

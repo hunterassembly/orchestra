@@ -12,7 +12,8 @@
 import * as React from 'react'
 import { useState, useEffect, useCallback, useRef, memo } from 'react'
 import { AnimatePresence, motion, type Variants } from 'motion/react'
-import { ChevronRight, FolderOpen, ExternalLink } from 'lucide-react'
+import { ChevronDown, ChevronRight, FolderOpen, ExternalLink, GitBranch, GitCompareArrows, MoreHorizontal } from 'lucide-react'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@craft-agent/ui'
 import {
   ContextMenu,
   ContextMenuTrigger,
@@ -20,11 +21,14 @@ import {
   StyledContextMenuItem,
 } from '@/components/ui/styled-context-menu'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
-import type { SessionFile } from '../../../shared/types'
+import { DropdownMenu, DropdownMenuTrigger, StyledDropdownMenuContent, StyledDropdownMenuItem, StyledDropdownMenuSeparator } from '@/components/ui/styled-dropdown'
+import { HeaderIconButton } from '@/components/ui/HeaderIconButton'
+import { toast } from 'sonner'
+import type { GitRepoInfo, GitStatusEntry, SessionFile } from '../../../shared/types'
 import { cn } from '@/lib/utils'
 import * as storage from '@/lib/local-storage'
 import { useAppShellContext, useActiveWorkspace, useSession as useSessionData } from '@/context/AppShellContext'
-import { getFileManagerName } from '@/lib/platform'
+import { getFileManagerName, isMac } from '@/lib/platform'
 import { getFileTypeIcon } from './file-type-icons'
 import { ChangedFilesList } from './ChangedFilesList'
 
@@ -229,7 +233,7 @@ export function WorkspaceFilesPanel({ sessionId, closeButton }: WorkspaceFilesPa
   // Use the session's working directory (the repo it's operating in),
   // falling back to the workspace root
   const rootPath = session?.workingDirectory || workspace?.rootPath
-  const { onOpenFile, openFileAsTabRef } = useAppShellContext()
+  const { onOpenFile, openFileAsTabRef, openWorkflowTabRef, getDraft, onInputChange, textareaRef, onSendMessage } = useAppShellContext()
 
   const [rootFiles, setRootFiles] = useState<SessionFile[]>([])
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(new Set())
@@ -380,13 +384,171 @@ export function WorkspaceFilesPanel({ sessionId, closeButton }: WorkspaceFilesPa
 
   // Persisted active tab
   const [activeTab, setActiveTab] = useState(() =>
-    storage.get<string>(storage.KEYS.workspaceFilesActiveTab, 'files')
+    storage.get<string>(storage.KEYS.workspaceFilesActiveTab, 'changes')
   )
+  const [changedEntries, setChangedEntries] = useState<GitStatusEntry[]>([])
+  const [gitRepoInfo, setGitRepoInfo] = useState<GitRepoInfo | null>(null)
+  const lastReviewFingerprintRef = useRef<string | null>(null)
 
   const handleTabChange = useCallback((value: string) => {
     setActiveTab(value)
     storage.set(storage.KEYS.workspaceFilesActiveTab, value)
   }, [])
+
+  useEffect(() => {
+    if (!rootPath) {
+      setGitRepoInfo(null)
+      return
+    }
+
+    window.electronAPI.getGitRepoInfo(rootPath)
+      .then(setGitRepoInfo)
+      .catch(() => setGitRepoInfo(null))
+  }, [rootPath])
+
+  const handlePrefillPrompt = useCallback((label: string, prompt: string) => {
+    if (openWorkflowTabRef?.current) {
+      openWorkflowTabRef.current({ label, prompt, autoSend: true })
+      return
+    }
+
+    if (!sessionId) return
+    const current = getDraft(sessionId).trim()
+    const next = current.length > 0 ? `${current}\n\n${prompt}` : prompt
+    onInputChange(sessionId, next)
+    textareaRef?.current?.focus()
+    toast.success('Added draft prompt to input')
+  }, [openWorkflowTabRef, sessionId, getDraft, onInputChange, textareaRef])
+
+  const handleDraftCommit = useCallback(() => {
+    const currentBranch = gitRepoInfo?.currentBranch ?? 'current branch'
+    const targetBranch = gitRepoInfo?.trackingBranch ?? 'origin/main'
+    const hasUpstream = !!gitRepoInfo?.trackingBranch
+    handlePrefillPrompt('Make Commit', [
+      'The user requested a commit.',
+      `Current branch: ${currentBranch}`,
+      `Target branch: ${targetBranch}`,
+      `Upstream branch exists: ${hasUpstream ? 'yes' : 'no'}`,
+      `There are ${changedEntries.length} uncommitted changes.`,
+      '',
+      'Follow these steps:',
+      '1) If you have any skills related to commits, invoke them now. Those instructions take precedence.',
+      '2) Run git diff to review uncommitted changes.',
+      '3) Commit all uncommitted changes.',
+      '4) Follow any user instructions about commit message format.',
+      '',
+      'If any step fails, ask the user for help.',
+    ].join('\n'))
+  }, [changedEntries.length, gitRepoInfo?.currentBranch, gitRepoInfo?.trackingBranch, handlePrefillPrompt])
+
+  const handleDraftPr = useCallback(() => {
+    const currentBranch = gitRepoInfo?.currentBranch ?? 'current branch'
+    const targetBranch = gitRepoInfo?.trackingBranch ?? 'origin/main'
+    const hasUpstream = !!gitRepoInfo?.trackingBranch
+    handlePrefillPrompt('Create PR', [
+      'The user likes the current state of the code and requested a PR.',
+      `Current branch: ${currentBranch}`,
+      `Target branch: ${targetBranch}`,
+      `Upstream branch exists: ${hasUpstream ? 'yes' : 'no'}`,
+      `There are ${changedEntries.length} uncommitted changes.`,
+      '',
+      'Follow these steps to create the PR:',
+      '1) If you have any skills related to creating PRs, invoke them now. Instructions there take precedence.',
+      '2) Run git diff to review uncommitted changes.',
+      '3) Commit the uncommitted changes. Follow any user commit-message instructions.',
+      '4) Push to origin.',
+      '5) Use mcp__conductor__GetWorkspaceDiff to review the PR diff.',
+      '6) Use gh pr create --base main to create a PR onto the target branch.',
+      '7) Keep the title under 80 characters.',
+      '8) Keep the description under five sentences unless user instructed otherwise.',
+      '9) Describe ALL changes in the workspace diff, not just this session.',
+      '',
+      'If any step fails, ask the user for help.',
+    ].join('\n'))
+  }, [changedEntries.length, gitRepoInfo?.currentBranch, gitRepoInfo?.trackingBranch, handlePrefillPrompt])
+
+  const reviewPrompt = useCallback((entries: GitStatusEntry[]) => {
+    const files = entries.slice(0, 200).map((entry) => `- ${entry.path} [${entry.status}]`).join('\n')
+    return [
+      'Run an automated code review for my current uncommitted changes.',
+      '',
+      'Context:',
+      '- Backend: Codex',
+      '- Objective: high-signal issues only (real bugs, clear rule violations)',
+      '- Ignore style nitpicks and speculative concerns.',
+      '',
+      'Required workflow:',
+      '1) Discover relevant AGENTS.md/CLAUDE.md files (root + folders that contain changed files).',
+      '2) Summarize the full diff.',
+      '3) Perform 4 independent review passes in parallel:',
+      '   - Two passes for AGENTS.md/CLAUDE.md compliance',
+      '   - Two passes for bugs/security/logic issues in changed code only',
+      '4) Validate every flagged issue with a second pass before reporting.',
+      '5) Return ONLY validated high-confidence issues with:',
+      '   - title',
+      '   - why it is an issue',
+      '   - file path',
+      '   - line/context from diff',
+      '   - category (bug, security, compliance)',
+      '',
+      'Changed files:',
+      files || '- (no changed files detected)',
+    ].join('\n')
+  }, [])
+
+  useEffect(() => {
+    if (activeTab !== 'review' || !sessionId || changedEntries.length === 0) return
+
+    const fingerprint = changedEntries
+      .map((entry) => `${entry.path}:${entry.status}`)
+      .sort()
+      .join('|')
+
+    if (lastReviewFingerprintRef.current === fingerprint) return
+    lastReviewFingerprintRef.current = fingerprint
+
+    if (openWorkflowTabRef?.current) {
+      openWorkflowTabRef.current({
+        label: 'Code Review',
+        prompt: reviewPrompt(changedEntries),
+        autoSend: true,
+      })
+    } else {
+      onSendMessage(sessionId, reviewPrompt(changedEntries))
+    }
+    toast.success('Review started', { description: 'Sent automated review prompt to chat.' })
+  }, [activeTab, sessionId, changedEntries, onSendMessage, openWorkflowTabRef, reviewPrompt])
+
+  useEffect(() => {
+    const handler = (event: KeyboardEvent) => {
+      if (!event.altKey || event.metaKey || event.ctrlKey || event.shiftKey) return
+
+      const target = event.target as HTMLElement | null
+      const tag = target?.tagName?.toLowerCase()
+      const isTypingTarget =
+        tag === 'input' ||
+        tag === 'textarea' ||
+        target?.isContentEditable
+      if (isTypingTarget) return
+
+      if (event.key === '1') {
+        event.preventDefault()
+        handleTabChange('files')
+      } else if (event.key === '2') {
+        event.preventDefault()
+        handleTabChange('changes')
+      } else if (event.key === '3') {
+        event.preventDefault()
+        handleTabChange('checks')
+      } else if (event.key === '4') {
+        event.preventDefault()
+        handleTabChange('review')
+      }
+    }
+
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [handleTabChange])
 
   if (!rootPath) {
     return (
@@ -404,25 +566,91 @@ export function WorkspaceFilesPanel({ sessionId, closeButton }: WorkspaceFilesPa
 
   return (
     <Tabs value={activeTab} onValueChange={handleTabChange} className="h-full flex flex-col">
-      {/* Header with tabs and close button */}
-      <div className="flex shrink-0 items-center px-2 pr-2 min-w-0 gap-1 h-[50px] titlebar-no-drag relative z-panel">
-        <div className="flex-1 min-w-0 flex items-center pl-1">
-          <TabsList className="h-7 bg-transparent p-0 gap-0">
-            <TabsTrigger
-              value="files"
-              className="h-7 rounded-md px-2.5 py-0 text-xs font-medium data-[state=active]:bg-muted data-[state=active]:shadow-none"
-            >
-              All files
-            </TabsTrigger>
-            <TabsTrigger
-              value="changes"
-              className="h-7 rounded-md px-2.5 py-0 text-xs font-medium data-[state=active]:bg-muted data-[state=active]:shadow-none"
-            >
-              Changes
-            </TabsTrigger>
+      {/* Header row 1: actions */}
+      <div className="flex shrink-0 items-center justify-end gap-1 px-2 pt-2 pb-1 titlebar-no-drag relative z-panel">
+        {sessionId && (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <HeaderIconButton
+                icon={(
+                  <span className="inline-flex items-center gap-1 text-[11px]">
+                    Create PR
+                    <ChevronDown className="h-3 w-3" />
+                  </span>
+                )}
+                className="h-7 w-auto px-2 text-foreground cursor-pointer"
+              />
+            </DropdownMenuTrigger>
+            <StyledDropdownMenuContent align="end" minWidth="min-w-52">
+              <StyledDropdownMenuItem onClick={handleDraftCommit} disabled={changedEntries.length === 0}>
+                <GitBranch className="h-3.5 w-3.5" />
+                Make Commit
+              </StyledDropdownMenuItem>
+              <StyledDropdownMenuItem onClick={handleDraftPr} disabled={changedEntries.length === 0}>
+                <GitCompareArrows className="h-3.5 w-3.5" />
+                Create PR
+              </StyledDropdownMenuItem>
+              <StyledDropdownMenuSeparator />
+              <StyledDropdownMenuItem disabled>
+                <MoreHorizontal className="h-3.5 w-3.5" />
+                More soon
+              </StyledDropdownMenuItem>
+            </StyledDropdownMenuContent>
+          </DropdownMenu>
+        )}
+        {closeButton && <div className="shrink-0">{closeButton}</div>}
+      </div>
+
+      {/* Header row 2: tabs */}
+      <div className="shrink-0 px-2 pb-2">
+        <div className="overflow-x-auto">
+          <TabsList className="h-7 bg-transparent p-0 gap-0 w-max min-w-full justify-start">
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <TabsTrigger
+                  value="files"
+                  className="h-7 rounded-md px-2.5 py-0 text-xs font-medium cursor-pointer data-[state=active]:bg-muted data-[state=active]:shadow-none"
+                >
+                  All files
+                </TabsTrigger>
+              </TooltipTrigger>
+              <TooltipContent>Workspace files {isMac ? '⌥1' : 'Alt+1'}</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <TabsTrigger
+                  value="changes"
+                  className="h-7 rounded-md px-2.5 py-0 text-xs font-medium cursor-pointer data-[state=active]:bg-muted data-[state=active]:shadow-none"
+                >
+                  Changes {changedEntries.length > 0 ? changedEntries.length : ''}
+                </TabsTrigger>
+              </TooltipTrigger>
+              <TooltipContent>Changed files {isMac ? '⌥2' : 'Alt+2'}</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <TabsTrigger
+                  value="checks"
+                  className="h-7 rounded-md px-2.5 py-0 text-xs font-medium cursor-pointer data-[state=active]:bg-muted data-[state=active]:shadow-none"
+                >
+                  Checks
+                </TabsTrigger>
+              </TooltipTrigger>
+              <TooltipContent>Checks {isMac ? '⌥3' : 'Alt+3'}</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <TabsTrigger
+                  value="review"
+                  className="h-7 rounded-md px-2.5 py-0 text-xs font-medium cursor-pointer data-[state=active]:bg-muted data-[state=active]:shadow-none"
+                >
+                  Review
+                </TabsTrigger>
+              </TooltipTrigger>
+              <TooltipContent>Run review {isMac ? '⌥4' : 'Alt+4'}</TooltipContent>
+            </Tooltip>
           </TabsList>
         </div>
-        {closeButton && <div className="shrink-0">{closeButton}</div>}
       </div>
 
       {/* All files tab */}
@@ -452,7 +680,21 @@ export function WorkspaceFilesPanel({ sessionId, closeButton }: WorkspaceFilesPa
 
       {/* Changes tab */}
       <TabsContent value="changes" className="flex-1 flex flex-col overflow-y-auto overflow-x-hidden pb-2 min-h-0 mt-0">
-        <ChangedFilesList rootPath={rootPath} />
+        <ChangedFilesList rootPath={rootPath} onEntriesChange={setChangedEntries} />
+      </TabsContent>
+
+      {/* Checks tab */}
+      <TabsContent value="checks" className="flex-1 flex items-center justify-center text-muted-foreground min-h-0 mt-0">
+        <p className="text-sm">Checks coming soon</p>
+      </TabsContent>
+
+      {/* Review tab */}
+      <TabsContent value="review" className="flex-1 flex items-center justify-center text-muted-foreground min-h-0 mt-0">
+        <p className="text-sm">
+          {changedEntries.length > 0
+            ? 'Review auto-starts in chat for current changes.'
+            : 'No changes to review.'}
+        </p>
       </TabsContent>
     </Tabs>
   )

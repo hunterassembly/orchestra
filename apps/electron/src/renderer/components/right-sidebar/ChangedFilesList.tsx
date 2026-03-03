@@ -52,9 +52,10 @@ function getStatusLabel(status: string): string {
 
 export interface ChangedFilesListProps {
   rootPath: string
+  onEntriesChange?: (entries: GitStatusEntry[]) => void
 }
 
-export function ChangedFilesList({ rootPath }: ChangedFilesListProps) {
+export function ChangedFilesList({ rootPath, onEntriesChange }: ChangedFilesListProps) {
   const { onOpenFile, onOpenDiff } = useAppShellContext()
   const [entries, setEntries] = useState<GitStatusEntry[]>([])
   const [isLoading, setIsLoading] = useState(false)
@@ -65,14 +66,20 @@ export function ChangedFilesList({ rootPath }: ChangedFilesListProps) {
     setIsLoading(true)
     try {
       const result = await window.electronAPI.getGitStatus(rootPath)
-      if (mountedRef.current) setEntries(result)
+      if (mountedRef.current) {
+        setEntries(result)
+        onEntriesChange?.(result)
+      }
     } catch (error) {
       console.error('Failed to load git status:', error)
-      if (mountedRef.current) setEntries([])
+      if (mountedRef.current) {
+        setEntries([])
+        onEntriesChange?.([])
+      }
     } finally {
       if (mountedRef.current) setIsLoading(false)
     }
-  }, [rootPath])
+  }, [rootPath, onEntriesChange])
 
   // Initial load + watcher
   useEffect(() => {
@@ -161,10 +168,10 @@ export function ChangedFilesList({ rootPath }: ChangedFilesListProps) {
                 </span>
 
                 {/* Filename + directory */}
-                <span className="flex-1 min-w-0 flex items-baseline gap-1.5">
-                  <span className="truncate">{filename}</span>
+                <span className="flex-1 min-w-0 overflow-hidden flex items-baseline gap-1.5">
+                  <span className="truncate min-w-0">{filename}</span>
                   {dirPath && (
-                    <span className="text-[11px] text-muted-foreground truncate shrink-0">
+                    <span className="text-[11px] text-muted-foreground truncate min-w-0">
                       {dirPath}
                     </span>
                   )}
@@ -172,7 +179,7 @@ export function ChangedFilesList({ rootPath }: ChangedFilesListProps) {
 
                 {/* Status badge */}
                 <span className={cn(
-                  'text-[11px] font-semibold shrink-0 w-4 text-center',
+                  'text-[11px] font-semibold shrink-0 w-6 text-right ml-1',
                   getStatusColor(entry.status),
                 )}>
                   {getStatusLabel(entry.status)}

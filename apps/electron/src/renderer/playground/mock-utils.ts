@@ -66,6 +66,8 @@ export const mockElectronAPI = {
   setPushToTalkWhisper: async (_enabled: boolean) => {},
   getWhisperMicrophoneId: async () => 'default',
   setWhisperMicrophoneId: async (_deviceId: string) => {},
+  startNativePushToTalk: async () => {},
+  stopNativePushToTalkAndTranscribe: async () => '',
   transcribeWithLocalWhisper: async (_audioBase64: string, _mimeType: string) => '',
 
   // Pi provider discovery mocks
