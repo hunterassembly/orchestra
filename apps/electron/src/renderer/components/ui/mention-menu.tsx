@@ -3,14 +3,14 @@ import { cn } from '@/lib/utils'
 import { FadingText } from '@/components/ui/fading-text'
 import { SkillAvatar } from '@/components/ui/skill-avatar'
 import { SourceAvatar } from '@/components/ui/source-avatar'
-import type { LoadedSkill, LoadedSource, FileSearchResult } from '../../../shared/types'
+import type { LoadedSource, FileSearchResult } from '../../../shared/types'
 import { AGENTS_PLUGIN_NAME } from '@craft-agent/shared/skills/types'
 
 // ============================================================================
 // Types
 // ============================================================================
 
-export type MentionItemType = 'skill' | 'source' | 'file' | 'folder'
+export type MentionItemType = 'source' | 'file' | 'folder' | 'skill'
 
 export interface MentionItem {
   id: string
@@ -18,7 +18,7 @@ export interface MentionItem {
   label: string
   description?: string
   // Type-specific data
-  skill?: LoadedSkill
+  skill?: never
   source?: LoadedSource
   file?: { path: string; type: 'file' | 'directory'; relativePath: string }
 }
@@ -270,7 +270,7 @@ export function InlineMentionMenu({
     >
       {/* Menu header — sticky above scroll area */}
       <div className="px-3 py-1.5 text-[12px] font-medium text-muted-foreground border-b border-foreground/5">
-        Mention files, skills, sources
+        Mention files and sources
       </div>
 
       <div ref={listRef} className={MENU_LIST_STYLE}>
@@ -418,7 +418,6 @@ export interface MentionInputElement {
 export interface UseInlineMentionOptions {
   /** Ref to input element (textarea or RichTextInput handle) */
   inputRef: React.RefObject<MentionInputElement | null>
-  skills: LoadedSkill[]
   sources: LoadedSource[]
   /** Base path for file search (working directory) */
   basePath?: string
@@ -441,7 +440,6 @@ export interface UseInlineMentionReturn {
 
 export function useInlineMention({
   inputRef,
-  skills,
   sources,
   basePath,
   onSelect,
@@ -473,24 +471,9 @@ export function useInlineMention({
     }
   }, [])
 
-  // Build sections from available data (skills, sources, and file search results)
+  // Build sections from available data (sources and file search results)
   const sections = React.useMemo((): MentionSection[] => {
     const result: MentionSection[] = []
-
-    // Skills section
-    if (skills.length > 0) {
-      result.push({
-        id: 'skills',
-        label: 'Skills',
-        items: skills.map(skill => ({
-          id: skill.slug,
-          type: 'skill' as const,
-          label: skill.metadata.name,
-          description: skill.metadata.description,
-          skill,
-        })),
-      })
-    }
 
     // Sources section
     if (sources.length > 0) {
@@ -519,7 +502,7 @@ export function useInlineMention({
     }
 
     return result
-  }, [skills, sources, fileResults])
+  }, [sources, fileResults])
 
   const handleInputChange = React.useCallback((value: string, cursorPosition: number) => {
     // Store current state for handleSelect

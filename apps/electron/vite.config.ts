@@ -38,6 +38,11 @@ export default defineConfig({
   build: {
     outDir: resolve(__dirname, 'dist/renderer'),
     emptyDirBeforeWrite: true,
+    // NOTE: Keep minification off for now.
+    // We observed a production-only runtime crash in the packaged app:
+    // "ReferenceError: Cannot access 'zn' before initialization" from minified bundle.
+    // Disabling minification avoids the regression while we isolate the exact transformer interaction.
+    minify: false,
     sourcemap: true,  // Source maps generated for debugging. Not uploaded to Sentry (see CLAUDE.md).
     rollupOptions: {
       input: {

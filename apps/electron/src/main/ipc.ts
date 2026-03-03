@@ -3385,6 +3385,24 @@ export function registerIpcHandlers(sessionManager: SessionManager, windowManage
     setSpellCheck(enabled)
   })
 
+  // Get push-to-talk local whisper setting
+  ipcMain.handle(IPC_CHANNELS.INPUT_GET_PUSH_TO_TALK_WHISPER, async () => {
+    const { getPushToTalkWhisper } = await import('@craft-agent/shared/config/storage')
+    return getPushToTalkWhisper()
+  })
+
+  // Set push-to-talk local whisper setting
+  ipcMain.handle(IPC_CHANNELS.INPUT_SET_PUSH_TO_TALK_WHISPER, async (_event, enabled: boolean) => {
+    const { setPushToTalkWhisper } = await import('@craft-agent/shared/config/storage')
+    setPushToTalkWhisper(enabled)
+  })
+
+  // Transcribe audio blob using local whisper backend
+  ipcMain.handle(IPC_CHANNELS.INPUT_TRANSCRIBE_LOCAL_WHISPER, async (_event, audioBase64: string, mimeType: string) => {
+    const { transcribeWithLocalWhisper } = await import('./local-whisper')
+    return transcribeWithLocalWhisper(audioBase64, mimeType)
+  })
+
   // Get keep awake while running setting
   ipcMain.handle(IPC_CHANNELS.POWER_GET_KEEP_AWAKE, async () => {
     const { getKeepAwakeWhileRunning } = await import('@craft-agent/shared/config/storage')

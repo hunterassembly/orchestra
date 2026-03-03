@@ -62,6 +62,9 @@ export const mockElectronAPI = {
 
   getSendMessageKey: async () => 'enter',
   getSpellCheck: async () => true,
+  getPushToTalkWhisper: async () => false,
+  setPushToTalkWhisper: async (_enabled: boolean) => {},
+  transcribeWithLocalWhisper: async (_audioBase64: string, _mimeType: string) => '',
 
   // Pi provider discovery mocks
   getPiApiKeyProviders: async () => [

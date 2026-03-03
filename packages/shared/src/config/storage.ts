@@ -61,6 +61,7 @@ export interface StoredConfig {
   autoCapitalisation?: boolean;  // Auto-capitalize first letter when typing (default: true)
   sendMessageKey?: 'enter' | 'cmd-enter';  // Key to send messages (default: 'enter')
   spellCheck?: boolean;  // Enable spell check in input (default: false)
+  pushToTalkWhisper?: boolean;  // Hold Space to dictate with local Whisper (default: false)
   // Power settings
   keepAwakeWhileRunning?: boolean;  // Prevent screen sleep while sessions are running (default: false)
   // Tool metadata
@@ -290,6 +291,28 @@ export function setSpellCheck(enabled: boolean): void {
   const config = loadStoredConfig();
   if (!config) return;
   config.spellCheck = enabled;
+  saveConfig(config);
+}
+
+/**
+ * Get whether push-to-talk local whisper dictation is enabled.
+ */
+export function getPushToTalkWhisper(): boolean {
+  const config = loadStoredConfig();
+  if (config?.pushToTalkWhisper !== undefined) {
+    return config.pushToTalkWhisper;
+  }
+  const defaults = loadConfigDefaults();
+  return defaults.defaults.pushToTalkWhisper ?? false;
+}
+
+/**
+ * Set whether push-to-talk local whisper dictation is enabled.
+ */
+export function setPushToTalkWhisper(enabled: boolean): void {
+  const config = loadStoredConfig();
+  if (!config) return;
+  config.pushToTalkWhisper = enabled;
   saveConfig(config);
 }
 

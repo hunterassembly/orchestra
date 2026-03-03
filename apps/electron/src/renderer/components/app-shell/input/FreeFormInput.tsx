@@ -22,6 +22,7 @@ import {
   InlineSlashCommand,
   useInlineSlashCommand,
   type SlashCommandId,
+  type SlashSkillItem,
 } from '@/components/ui/slash-command-menu'
 import {
   InlineMentionMenu,
@@ -84,12 +85,13 @@ function formatTokenCount(tokens: number): string {
 
 /** Platform-specific modifier key for keyboard shortcuts */
 const cmdKey = isMac ? '⌘' : 'Ctrl'
+const PUSH_TO_TALK_HOLD_MS = 220
 
 /** Default rotating placeholders for onboarding/empty state */
 const DEFAULT_PLACEHOLDERS = [
   'What would you like to work on?',
   'Use Shift + Tab to switch between Explore and Execute',
-  'Type @ to mention files, folders, or skills',
+  'Type / for skills and actions, @ for files and sources',
   'Type # to apply labels to this conversation',
   'Press Shift + Return to add a new line',
   `Press ${cmdKey} + B to toggle the sidebar`,
@@ -104,6 +106,50 @@ function shuffleArray<T>(array: T[]): T[] {
     [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]]
   }
   return shuffled
+}
+
+function blobToBase64(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => {
+      const result = reader.result
+      if (typeof result !== 'string') {
+        reject(new Error('Failed to read audio data'))
+        return
+      }
+      resolve(result.split(',')[1] || '')
+    }
+    reader.onerror = () => reject(reader.error || new Error('Failed to read audio data'))
+    reader.readAsDataURL(blob)
+  })
+}
+
+const SUPPORTED_AUDIO_MIME_TYPES = [
+  'audio/webm;codecs=opus',
+  'audio/webm',
+  'audio/ogg;codecs=opus',
+  'audio/ogg',
+  'audio/wav',
+  'audio/mp4',
+  'audio/mpeg',
+]
+
+function getSupportedAudioMimeType(): string | null {
+  if (typeof MediaRecorder === 'undefined' || typeof MediaRecorder.isTypeSupported !== 'function') {
+    return null
+  }
+
+  for (const mimeType of SUPPORTED_AUDIO_MIME_TYPES) {
+    try {
+      if (MediaRecorder.isTypeSupported(mimeType)) {
+        return mimeType
+      }
+    } catch {
+      // Some strings throw (esp. on older browsers) - skip
+    }
+  }
+
+  return null
 }
 
 export interface FreeFormInputProps {
@@ -455,25 +501,50 @@ export function FreeFormInput({
   const [autoCapitalisation, setAutoCapitalisation] = React.useState(true)
   const [sendMessageKey, setSendMessageKey] = React.useState<'enter' | 'cmd-enter'>('enter')
   const [spellCheck, setSpellCheck] = React.useState(false)
+  const [pushToTalkWhisper, setPushToTalkWhisper] = React.useState(false)
+  const [isDictating, setIsDictating] = React.useState(false)
+
+  const pushToTalkTimerRef = React.useRef<NodeJS.Timeout | null>(null)
+  const pushToTalkPressedRef = React.useRef(false)
+  const pushToTalkInterceptedRef = React.useRef(false)
+  const mediaRecorderRef = React.useRef<MediaRecorder | null>(null)
+  const mediaStreamRef = React.useRef<MediaStream | null>(null)
+  const mediaChunksRef = React.useRef<Blob[]>([])
 
   // Load input settings on mount
   React.useEffect(() => {
     const loadInputSettings = async () => {
       if (!window.electronAPI) return
       try {
-        const [autoCapEnabled, sendKey, spellCheckEnabled] = await Promise.all([
+        const [autoCapEnabled, sendKey, spellCheckEnabled, pushToTalkEnabled] = await Promise.all([
           window.electronAPI.getAutoCapitalisation(),
           window.electronAPI.getSendMessageKey(),
           window.electronAPI.getSpellCheck(),
+          window.electronAPI.getPushToTalkWhisper(),
         ])
         setAutoCapitalisation(autoCapEnabled)
         setSendMessageKey(sendKey ?? 'enter')
         setSpellCheck(spellCheckEnabled)
+        setPushToTalkWhisper(pushToTalkEnabled)
       } catch (error) {
         console.error('Failed to load input settings:', error)
       }
     }
     loadInputSettings()
+  }, [])
+
+  React.useEffect(() => {
+    return () => {
+      if (pushToTalkTimerRef.current) clearTimeout(pushToTalkTimerRef.current)
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+        mediaRecorderRef.current.stop()
+      }
+      if (mediaStreamRef.current) {
+        for (const track of mediaStreamRef.current.getTracks()) {
+          track.stop()
+        }
+      }
+    }
   }, [])
 
   // Double-Esc interrupt: show warning overlay on first Esc, interrupt on second
@@ -772,13 +843,16 @@ export function FreeFormInput({
   const inlineSlash = useInlineSlashCommand({
     inputRef: richInputRef,
     onSelectCommand: handleSlashCommand,
+    onSelectSkill: () => {},
     onSelectFolder: handleSlashFolderSelect,
     activeCommands,
     recentFolders,
+    skills,
+    workspaceId: workspaceSlug,
     homeDir,
   })
 
-  // Handle mention selection (sources, skills, files)
+  // Handle mention selection (sources, files)
   const handleMentionSelect = React.useCallback((item: MentionItem) => {
     // For sources: enable the source immediately
     if (item.type === 'source' && item.source && onSourcesChange) {
@@ -791,13 +865,11 @@ export function FreeFormInput({
     }
 
     // Files via @ mention: [file:path] in text is sufficient context for the agent.
-    // Skills also don't need special handling beyond text insertion.
   }, [optimisticSourceSlugs, onSourcesChange])
 
-  // Inline mention hook (for skills, sources, and files)
+  // Inline mention hook (for sources and files)
   const inlineMention = useInlineMention({
     inputRef: richInputRef,
-    skills,
     sources,
     basePath: workingDirectory,
     onSelect: handleMentionSelect,
@@ -1110,7 +1182,180 @@ export function FreeFormInput({
     onStop?.(silent)
   }
 
+  const insertTextAtCursor = React.useCallback((text: string) => {
+    const cursorPos = richInputRef.current?.selectionStart ?? inputRef.current.length
+    const currentValue = inputRef.current
+    const newValue = currentValue.slice(0, cursorPos) + text + currentValue.slice(cursorPos)
+    setInput(newValue)
+    syncToParent(newValue)
+    requestAnimationFrame(() => {
+      richInputRef.current?.focus()
+      richInputRef.current?.setSelectionRange(cursorPos + text.length, cursorPos + text.length)
+    })
+  }, [syncToParent, richInputRef])
+
+  const startPushToTalkRecording = React.useCallback(async () => {
+    if (!pushToTalkWhisper || disabled || isDictating) return
+    if (!navigator.mediaDevices?.getUserMedia) {
+      toast.error('Microphone is not available in this environment')
+      return
+    }
+    if (typeof MediaRecorder === 'undefined') {
+      toast.error('MediaRecorder is not supported in this environment')
+      return
+    }
+
+    let stream: MediaStream | null = null
+
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      const mimeType = getSupportedAudioMimeType()
+      if (!mimeType) {
+        throw new Error('This browser cannot record audio in a compatible format')
+      }
+
+      const recorder = new MediaRecorder(stream, { mimeType })
+      mediaStreamRef.current = stream
+      mediaRecorderRef.current = recorder
+      mediaChunksRef.current = []
+
+      recorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          mediaChunksRef.current.push(event.data)
+        }
+      }
+
+      recorder.start()
+      setIsDictating(true)
+      toast.message('Listening… release Space to transcribe')
+    } catch (error) {
+      if (stream) {
+        stream.getTracks().forEach(track => track.stop())
+      }
+      console.error('[FreeFormInput] Failed to start microphone capture:', error)
+      toast.error('Could not start microphone recording')
+      pushToTalkPressedRef.current = false
+      pushToTalkInterceptedRef.current = false
+      if (pushToTalkTimerRef.current) {
+        clearTimeout(pushToTalkTimerRef.current)
+        pushToTalkTimerRef.current = null
+      }
+    }
+  }, [pushToTalkWhisper, disabled, isDictating])
+
+  const stopPushToTalkRecording = React.useCallback(async () => {
+    const recorder = mediaRecorderRef.current
+    if (!recorder) return
+
+    const recordingDone = new Promise<Blob>((resolve, reject) => {
+      recorder.onstop = () => {
+        const mimeType = recorder.mimeType || 'audio/webm'
+        resolve(new Blob(mediaChunksRef.current, { type: mimeType }))
+      }
+      recorder.onerror = () => reject(new Error('Recording failed'))
+    })
+
+    if (recorder.state !== 'inactive') {
+      recorder.stop()
+    }
+    mediaRecorderRef.current = null
+
+    if (mediaStreamRef.current) {
+      for (const track of mediaStreamRef.current.getTracks()) {
+        track.stop()
+      }
+      mediaStreamRef.current = null
+    }
+
+    try {
+      const audioBlob = await recordingDone
+      const audioBase64 = await blobToBase64(audioBlob)
+      const transcript = await window.electronAPI.transcribeWithLocalWhisper(audioBase64, audioBlob.type)
+      const cleanTranscript = transcript.trim()
+      if (cleanTranscript.length > 0) {
+        insertTextAtCursor(`${cleanTranscript} `)
+      }
+    } catch (error) {
+      console.error('[FreeFormInput] Whisper transcription failed:', error)
+      toast.error('Local Whisper transcription failed')
+    } finally {
+      mediaChunksRef.current = []
+      setIsDictating(false)
+    }
+  }, [insertTextAtCursor])
+
+  const handlePushToTalkRelease = React.useCallback((event?: KeyboardEvent | React.KeyboardEvent) => {
+    if (!pushToTalkInterceptedRef.current) return
+    if (pushToTalkTimerRef.current) {
+      clearTimeout(pushToTalkTimerRef.current)
+      pushToTalkTimerRef.current = null
+    }
+
+    const wasDictating = isDictating || !!mediaRecorderRef.current
+    pushToTalkPressedRef.current = false
+    pushToTalkInterceptedRef.current = false
+
+    if (wasDictating) {
+      event?.preventDefault()
+      void stopPushToTalkRecording()
+      return
+    }
+
+    if (event && !event.shiftKey && !event.metaKey && !event.ctrlKey && !event.altKey && !disabled) {
+      event.preventDefault()
+      insertTextAtCursor(' ')
+    }
+  }, [disabled, insertTextAtCursor, isDictating, stopPushToTalkRecording])
+
+  React.useEffect(() => {
+    const handleWindowKeyUp = (event: KeyboardEvent) => {
+      if (event.code === 'Space') {
+        handlePushToTalkRelease(event)
+      }
+    }
+    const handleWindowBlur = () => {
+      handlePushToTalkRelease()
+    }
+    window.addEventListener('keyup', handleWindowKeyUp)
+    window.addEventListener('blur', handleWindowBlur)
+    return () => {
+      window.removeEventListener('keyup', handleWindowKeyUp)
+      window.removeEventListener('blur', handleWindowBlur)
+    }
+  }, [handlePushToTalkRelease])
+
+  React.useEffect(() => {
+    if (!pushToTalkWhisper && pushToTalkInterceptedRef.current) {
+      handlePushToTalkRelease()
+    }
+  }, [pushToTalkWhisper, handlePushToTalkRelease])
+
   const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (
+      pushToTalkWhisper &&
+      e.key === ' ' &&
+      !e.repeat &&
+      !e.shiftKey &&
+      !e.metaKey &&
+      !e.ctrlKey &&
+      !e.altKey &&
+      !e.nativeEvent.isComposing &&
+      !inlineMention.isOpen &&
+      !inlineSlash.isOpen &&
+      !inlineLabel.isOpen &&
+      !disabled
+    ) {
+      e.preventDefault()
+      pushToTalkPressedRef.current = true
+      pushToTalkInterceptedRef.current = true
+      if (pushToTalkTimerRef.current) clearTimeout(pushToTalkTimerRef.current)
+      pushToTalkTimerRef.current = setTimeout(() => {
+        if (!pushToTalkPressedRef.current) return
+        void startPushToTalkRecording()
+      }, PUSH_TO_TALK_HOLD_MS)
+      return
+    }
+
     // Don't submit when mention menu is open AND has visible content
     if (inlineMention.isOpen) {
       // Only intercept navigation/selection keys if menu actually shows items or is loading
@@ -1185,6 +1430,11 @@ export function FreeFormInput({
     }
   }
 
+  const handleKeyUp = (e: React.KeyboardEvent) => {
+    if (!pushToTalkWhisper || e.key !== ' ') return
+    handlePushToTalkRelease(e)
+  }
+
   // Handle input changes from RichTextInput
   const handleInputChange = React.useCallback((value: string) => {
     // Get previous input value before updating state
@@ -1256,6 +1506,14 @@ export function FreeFormInput({
     richInputRef.current?.focus()
   }, [inlineSlash, syncToParent])
 
+  // Handle inline slash skill selection (inserts [skill:...] mention text)
+  const handleInlineSlashSkillSelect = React.useCallback((skill: SlashSkillItem) => {
+    const newValue = inlineSlash.handleSelectSkill(skill)
+    setInput(newValue)
+    syncToParent(newValue)
+    richInputRef.current?.focus()
+  }, [inlineSlash, syncToParent])
+
   // Handle inline slash folder selection (inserts [dir:/path] badge)
   const handleInlineSlashFolderSelect = React.useCallback((path: string) => {
     const newValue = inlineSlash.handleSelectFolder(path)
@@ -1320,12 +1578,13 @@ export function FreeFormInput({
           sections={inlineSlash.sections}
           activeCommands={activeCommands}
           onSelectCommand={handleInlineSlashCommandSelect}
+          onSelectSkill={handleInlineSlashSkillSelect}
           onSelectFolder={handleInlineSlashFolderSelect}
           filter={inlineSlash.filter}
           position={inlineSlash.position}
         />
 
-        {/* Inline Mention Autocomplete (skills, sources, files) */}
+        {/* Inline Mention Autocomplete (sources, files) */}
         <InlineMentionMenu
           open={inlineMention.isOpen}
           onOpenChange={(open) => !open && inlineMention.close()}
@@ -1391,6 +1650,7 @@ export function FreeFormInput({
           onChange={handleInputChange}
           onInput={handleRichInput}
           onKeyDown={handleKeyDown}
+          onKeyUp={handleKeyUp}
           onPaste={handlePaste}
           onLongTextPaste={handleLongTextPaste}
           onFocus={() => { setIsFocused(true); onFocusChange?.(true) }}
@@ -1620,8 +1880,14 @@ export function FreeFormInput({
 
           {/* Right side: Model + Send - never shrink so they're always visible */}
           <div className="flex items-center shrink-0">
-          {/* 5. Model/Connection Selector - Hidden in compact mode (EditPopover embedding) */}
-          {!compactMode && (
+            {isDictating && (
+              <div className="mr-2 flex items-center gap-1 text-[12px] font-medium text-emerald-500">
+                <Loader2 className="h-3 w-3 animate-spin" />
+                Listening…
+              </div>
+            )}
+            {/* 5. Model/Connection Selector - Hidden in compact mode (EditPopover embedding) */}
+            {!compactMode && (
           <DropdownMenu open={modelDropdownOpen} onOpenChange={setModelDropdownOpen}>
             <Tooltip>
               <TooltipTrigger asChild>

@@ -146,9 +146,17 @@ registerPiModelResolver((piAuthProvider) =>
   piAuthProvider ? getPiModelsForAuthProvider(piAuthProvider) : getAllPiModels()
 )
 
+const APP_DISPLAY_NAME = process.env.CRAFT_APP_NAME || app.getName() || 'Orchestra'
+
+function resolveDefaultDeepLinkScheme(appName: string): string {
+  const normalized = appName.toLowerCase()
+  if (normalized.includes('dev')) return 'orchestradev'
+  return 'orchestra'
+}
+
 // Custom URL scheme for deeplinks (e.g., orchestra://auth-complete)
-// Supports multi-instance dev: CRAFT_DEEPLINK_SCHEME env var (orchestra1, orchestra2, etc.)
-const DEEPLINK_SCHEME = process.env.CRAFT_DEEPLINK_SCHEME || 'orchestra'
+// Supports multi-instance dev and dev/prod side-by-side installs.
+const DEEPLINK_SCHEME = process.env.CRAFT_DEEPLINK_SCHEME || resolveDefaultDeepLinkScheme(APP_DISPLAY_NAME)
 
 let windowManager: WindowManager | null = null
 let sessionManager: SessionManager | null = null
@@ -160,7 +168,7 @@ let pendingDeepLink: string | null = null
 
 // Set app name early (before app.whenReady) to ensure correct macOS menu bar title
 // Supports multi-instance dev: CRAFT_APP_NAME env var (e.g., "Orchestra [1]")
-app.setName(process.env.CRAFT_APP_NAME || 'Orchestra')
+app.setName(APP_DISPLAY_NAME)
 
 // Register as default protocol client for orchestra:// URLs
 // This must be done before app.whenReady() on some platforms

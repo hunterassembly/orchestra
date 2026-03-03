@@ -209,6 +209,7 @@ function SlashCommandDemo() {
           sections={inlineSlash.sections}
           activeCommands={activeCommands}
           onSelectCommand={handleInlineCommandSelect}
+          onSelectSkill={() => {}}
           onSelectFolder={handleInlineFolderSelect}
           filter={inlineSlash.filter}
           position={inlineSlash.position}

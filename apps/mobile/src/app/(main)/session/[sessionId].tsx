@@ -1,9 +1,15 @@
 import type {
+  CredentialInputModeDTO,
+  CredentialRequestDTO,
+  CredentialResponseDTO,
   PermissionModeDTO,
+  PermissionRequestDTO,
+  PermissionResponseDTO,
   SessionCommandDTO,
   SessionDTO,
   SessionEventDTO,
 } from "@craft-agent/mobile-contracts";
+import { File } from "expo-file-system";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -33,6 +39,35 @@ type PendingSend = {
   optimisticId: string;
   text: string;
   timestamp: number;
+  attachmentIds: string[];
+};
+
+type TimelineItem =
+  | { kind: "message"; key: string; message: SessionMessage }
+  | { kind: "permission"; key: string; request: PermissionRequestDTO }
+  | { kind: "credential"; key: string; request: CredentialRequestDTO };
+
+type RequestActionState = {
+  isSubmitting: boolean;
+  error: string | null;
+};
+
+type CredentialFormState = RequestActionState & {
+  value: string;
+  username: string;
+  password: string;
+  headers: Record<string, string>;
+};
+
+type AttachmentDraft = {
+  localId: string;
+  name: string;
+  mimeType: string;
+  size: number;
+  data: string;
+  status: "uploading" | "ready" | "error";
+  attachmentId?: string;
+  error: string | null;
 };
 
 function toSessionId(value: string | string[] | undefined): string | null {
@@ -58,6 +93,15 @@ function toUserMessage(error: unknown): string {
   }
 
   return "Unable to complete request.";
+}
+
+function isCancelledError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+
+  const normalized = error.message.toLowerCase();
+  return normalized.includes("cancel");
 }
 
 function connectionTone(
@@ -95,7 +139,9 @@ function connectionLabel(streamState: "connecting" | "connected" | "reconnecting
   return "Offline";
 }
 
-function messageBubbleVariant(message: SessionMessage): "user" | "assistant" | "status" | "error" | "tool" {
+function messageBubbleVariant(
+  message: SessionMessage,
+): "user" | "assistant" | "status" | "info" | "warning" | "plan" | "error" | "tool" {
   if (message.role === "user") {
     return "user";
   }
@@ -108,11 +154,142 @@ function messageBubbleVariant(message: SessionMessage): "user" | "assistant" | "
     return "error";
   }
 
-  if (message.role === "status" || message.role === "info" || message.role === "warning" || message.role === "plan") {
+  if (message.role === "status") {
     return "status";
   }
 
+  if (message.role === "warning") {
+    return "warning";
+  }
+
+  if (message.role === "plan") {
+    return "plan";
+  }
+
+  if (message.role === "info") {
+    if (message.infoLevel === "warning") {
+      return "warning";
+    }
+    if (message.infoLevel === "error") {
+      return "error";
+    }
+    if (message.infoLevel === "success") {
+      return "plan";
+    }
+
+    return "info";
+  }
+
   return "assistant";
+}
+
+function sessionStatusLabel(session: SessionDTO | undefined): string {
+  if (!session) {
+    return "idle";
+  }
+
+  if (session.isProcessing) {
+    return "running";
+  }
+
+  if (!session.sessionStatus || session.sessionStatus.trim().length === 0) {
+    return "idle";
+  }
+
+  return session.sessionStatus.trim().toLowerCase();
+}
+
+function sessionStatusBadgeVariant(session: SessionDTO | undefined): "default" | "secondary" | "destructive" | "outline" {
+  const normalized = sessionStatusLabel(session);
+
+  if (normalized === "running") {
+    return "default";
+  }
+  if (normalized === "waiting") {
+    return "secondary";
+  }
+  if (normalized === "error") {
+    return "destructive";
+  }
+
+  return "outline";
+}
+
+function permissionModeLabel(mode: PermissionModeDTO | null | undefined): string {
+  if (mode === "allow-all") {
+    return "auto";
+  }
+  if (mode === "safe") {
+    return "safe";
+  }
+  if (mode === "ask") {
+    return "ask";
+  }
+
+  return "ask";
+}
+
+function truncate(text: string, maxLength: number): string {
+  const trimmed = text.trim();
+  if (trimmed.length <= maxLength) {
+    return trimmed;
+  }
+
+  return `${trimmed.slice(0, maxLength - 1)}…`;
+}
+
+function summarizeToolInput(input: Record<string, unknown> | null): string | null {
+  if (!input) {
+    return null;
+  }
+
+  try {
+    return truncate(JSON.stringify(input), 120);
+  } catch {
+    return null;
+  }
+}
+
+function summarizeToolResult(result: string | null): string | null {
+  if (!result || result.trim().length === 0) {
+    return null;
+  }
+
+  return truncate(result.replace(/\s+/g, " "), 120);
+}
+
+function toolStatusBadgeVariant(status: SessionMessage["toolStatus"]): "default" | "secondary" | "destructive" | "outline" {
+  if (status === "error") {
+    return "destructive";
+  }
+  if (status === "executing" || status === "backgrounded") {
+    return "default";
+  }
+  if (status === "pending") {
+    return "secondary";
+  }
+
+  return "outline";
+}
+
+function eventLabel(variant: ReturnType<typeof messageBubbleVariant>): string | null {
+  if (variant === "status") {
+    return "Status";
+  }
+  if (variant === "info") {
+    return "Info";
+  }
+  if (variant === "warning") {
+    return "Warning";
+  }
+  if (variant === "plan") {
+    return "Plan";
+  }
+  if (variant === "error") {
+    return "Error";
+  }
+
+  return null;
 }
 
 function buildOptimisticUserMessage(optimisticId: string, text: string): SessionMessage {
@@ -138,6 +315,81 @@ function clampInput(value: string): string {
   return value.replace(/\s+$/u, (match) => match.replace(/\n+$/u, "\n"));
 }
 
+function formatBytes(size: number): string {
+  if (!Number.isFinite(size) || size <= 0) {
+    return "0 B";
+  }
+
+  if (size < 1024) {
+    return `${size} B`;
+  }
+
+  if (size < 1024 * 1024) {
+    return `${(size / 1024).toFixed(1)} KB`;
+  }
+
+  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function deriveFileName(uri: string): string {
+  const candidate = uri.split("/").pop() ?? "";
+  if (!candidate) {
+    return `attachment-${Date.now()}`;
+  }
+
+  try {
+    return decodeURIComponent(candidate);
+  } catch {
+    return candidate;
+  }
+}
+
+function guessMimeType(name: string, fallback: string): string {
+  if (fallback.trim().length > 0) {
+    return fallback;
+  }
+
+  const normalized = name.trim().toLowerCase();
+  if (normalized.endsWith(".png")) return "image/png";
+  if (normalized.endsWith(".jpg") || normalized.endsWith(".jpeg")) return "image/jpeg";
+  if (normalized.endsWith(".webp")) return "image/webp";
+  if (normalized.endsWith(".gif")) return "image/gif";
+  if (normalized.endsWith(".pdf")) return "application/pdf";
+  if (normalized.endsWith(".md")) return "text/markdown";
+  if (normalized.endsWith(".json")) return "application/json";
+  if (normalized.endsWith(".txt")) return "text/plain";
+
+  return "application/octet-stream";
+}
+
+function credentialMode(request: CredentialRequestDTO): CredentialInputModeDTO {
+  return request.inputMode ?? "bearer";
+}
+
+function createCredentialFormState(request: CredentialRequestDTO): CredentialFormState {
+  const headers: Record<string, string> = {};
+
+  const explicitHeaders = request.headerNames ?? [];
+  for (const header of explicitHeaders) {
+    if (header.trim().length > 0) {
+      headers[header] = "";
+    }
+  }
+
+  if (request.headerName && request.headerName.trim().length > 0 && !(request.headerName in headers)) {
+    headers[request.headerName] = "";
+  }
+
+  return {
+    value: "",
+    username: "",
+    password: "",
+    headers,
+    isSubmitting: false,
+    error: null,
+  };
+}
+
 export default function SessionScreen() {
   const router = useRouter();
   const theme = useTheme();
@@ -153,6 +405,8 @@ export default function SessionScreen() {
   const updateMessage = useSessionsStore((state) => state.updateMessage);
   const upsertSession = useSessionsStore((state) => state.upsertSession);
   const removeSession = useSessionsStore((state) => state.deleteSession);
+  const dequeuePermissionRequest = useSessionsStore((state) => state.dequeuePermissionRequest);
+  const dequeueCredentialRequest = useSessionsStore((state) => state.dequeueCredentialRequest);
   const applyEvent = useSessionsStore((state) => state.applyEvent);
 
   const [isLoading, setIsLoading] = useState(true);
@@ -163,11 +417,14 @@ export default function SessionScreen() {
   const [streamState, setStreamState] = useState<"connecting" | "connected" | "reconnecting" | "offline">("connecting");
   const [pendingQueue, setPendingQueue] = useState<PendingSend[]>([]);
   const [expandedToolMessageIds, setExpandedToolMessageIds] = useState<Record<string, boolean>>({});
+  const [permissionActionById, setPermissionActionById] = useState<Record<string, RequestActionState>>({});
+  const [credentialFormById, setCredentialFormById] = useState<Record<string, CredentialFormState>>({});
+  const [attachmentDrafts, setAttachmentDrafts] = useState<AttachmentDraft[]>([]);
   const [isAtBottom, setIsAtBottom] = useState(true);
   const [autoFollow, setAutoFollow] = useState(true);
 
   const sseClientRef = useRef<MobileSseClient | null>(null);
-  const listRef = useRef<FlatList<SessionMessage>>(null);
+  const listRef = useRef<FlatList<TimelineItem>>(null);
   const reconnectAttemptRef = useRef(0);
 
   const client = useMemo(() => {
@@ -178,6 +435,8 @@ export default function SessionScreen() {
 
   const session = record?.session;
   const messages = record?.messages ?? [];
+  const permissionRequests = record?.permissionRequests ?? [];
+  const credentialRequests = record?.credentialRequests ?? [];
   const sessionWorkspaceId = session?.workspaceId ?? null;
   const isProcessing = Boolean(session?.isProcessing);
 
@@ -215,6 +474,68 @@ export default function SessionScreen() {
   useEffect(() => {
     pruneDeliveredPendingQueue();
   }, [messages, pruneDeliveredPendingQueue]);
+
+  useEffect(() => {
+    const activeRequestIds = new Set(permissionRequests.map((request) => request.requestId));
+    setPermissionActionById((current) => {
+      let changed = false;
+      const next: Record<string, RequestActionState> = {};
+
+      for (const [requestId, state] of Object.entries(current)) {
+        if (activeRequestIds.has(requestId)) {
+          next[requestId] = state;
+        } else {
+          changed = true;
+        }
+      }
+
+      return changed ? next : current;
+    });
+  }, [permissionRequests]);
+
+  useEffect(() => {
+    const activeRequestIds = new Set(credentialRequests.map((request) => request.requestId));
+    setCredentialFormById((current) => {
+      let changed = false;
+      const next: Record<string, CredentialFormState> = {};
+
+      for (const [requestId, state] of Object.entries(current)) {
+        if (activeRequestIds.has(requestId)) {
+          next[requestId] = state;
+        } else {
+          changed = true;
+        }
+      }
+
+      return changed ? next : current;
+    });
+  }, [credentialRequests]);
+
+  const timelineItems = useMemo<TimelineItem[]>(() => {
+    const items: TimelineItem[] = messages.map((message) => ({
+      kind: "message",
+      key: `message:${message.id}`,
+      message,
+    }));
+
+    for (const request of permissionRequests) {
+      items.push({
+        kind: "permission",
+        key: `permission:${request.requestId}`,
+        request,
+      });
+    }
+
+    for (const request of credentialRequests) {
+      items.push({
+        kind: "credential",
+        key: `credential:${request.requestId}`,
+        request,
+      });
+    }
+
+    return items;
+  }, [credentialRequests, messages, permissionRequests]);
 
   const fetchSessionDetail = useCallback(async () => {
     if (!sessionId || !client) {
@@ -261,9 +582,20 @@ export default function SessionScreen() {
       try {
         await client.sendMessage(sessionId, payload.text, {
           optimisticMessageId: payload.optimisticId,
-        });
+        }, payload.attachmentIds.map((attachmentId) => ({ id: attachmentId })));
 
         setPendingQueue((current) => current.filter((entry) => entry.optimisticId !== payload.optimisticId));
+        if (payload.attachmentIds.length > 0) {
+          setAttachmentDrafts((current) =>
+            current.filter((draft) => {
+              if (draft.status !== "ready" || !draft.attachmentId) {
+                return true;
+              }
+
+              return !payload.attachmentIds.includes(draft.attachmentId);
+            }),
+          );
+        }
         return true;
       } catch (error) {
         setErrorMessage(toUserMessage(error));
@@ -349,7 +681,7 @@ export default function SessionScreen() {
     }
 
     scrollToBottom(isProcessing);
-  }, [autoFollow, isProcessing, messages.length, scrollToBottom]);
+  }, [autoFollow, isProcessing, scrollToBottom, timelineItems.length]);
 
   const handleSend = useCallback(async () => {
     if (isSending || !sessionId) {
@@ -362,10 +694,14 @@ export default function SessionScreen() {
     }
 
     const optimisticId = `optimistic-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+    const readyAttachmentIds = attachmentDrafts
+      .filter((draft) => draft.status === "ready" && typeof draft.attachmentId === "string")
+      .map((draft) => draft.attachmentId as string);
     const payload: PendingSend = {
       optimisticId,
       text,
       timestamp: Date.now(),
+      attachmentIds: readyAttachmentIds,
     };
 
     setComposerText("");
@@ -379,7 +715,7 @@ export default function SessionScreen() {
     } finally {
       setIsSending(false);
     }
-  }, [composerText, isSending, scrollToBottom, sendWithQueue, sessionId]);
+  }, [attachmentDrafts, composerText, isSending, scrollToBottom, sendWithQueue, sessionId]);
 
   const handleInterrupt = useCallback(async () => {
     if (!sessionId || !client || isInterrupting) {
@@ -549,9 +885,261 @@ export default function SessionScreen() {
     ]);
   }, [promptDelete, promptPermissionMode, promptRename, promptStatus, session?.name]);
 
-  const showAttachmentPicker = useCallback(() => {
-    Alert.alert("Attachments", "Attachment picker ships in Step 5.");
+  const respondToPermissionRequest = useCallback(async (request: PermissionRequestDTO, response: PermissionResponseDTO) => {
+    if (!sessionId || !client) {
+      return;
+    }
+
+    setPermissionActionById((current) => ({
+      ...current,
+      [request.requestId]: {
+        isSubmitting: true,
+        error: null,
+      },
+    }));
+
+    try {
+      await client.respondToPermission(sessionId, request.requestId, response);
+      dequeuePermissionRequest(sessionId, request.requestId);
+    } catch (error) {
+      const message = toUserMessage(error);
+      setErrorMessage(message);
+      setPermissionActionById((current) => ({
+        ...current,
+        [request.requestId]: {
+          isSubmitting: false,
+          error: message,
+        },
+      }));
+      return;
+    }
+
+    setPermissionActionById((current) => ({
+      ...current,
+      [request.requestId]: {
+        isSubmitting: false,
+        error: null,
+      },
+    }));
+  }, [client, dequeuePermissionRequest, sessionId]);
+
+  const updateCredentialForm = useCallback((request: CredentialRequestDTO, updater: (state: CredentialFormState) => CredentialFormState) => {
+    setCredentialFormById((current) => {
+      const baseline = current[request.requestId] ?? createCredentialFormState(request);
+      return {
+        ...current,
+        [request.requestId]: updater(baseline),
+      };
+    });
   }, []);
+
+  const respondToCredentialRequest = useCallback(async (request: CredentialRequestDTO, response: CredentialResponseDTO) => {
+    if (!sessionId || !client) {
+      return;
+    }
+
+    updateCredentialForm(request, (state) => ({
+      ...state,
+      isSubmitting: true,
+      error: null,
+    }));
+
+    try {
+      await client.respondToCredential(sessionId, request.requestId, response);
+      dequeueCredentialRequest(sessionId, request.requestId);
+      setCredentialFormById((current) => {
+        if (!(request.requestId in current)) {
+          return current;
+        }
+
+        const next = { ...current };
+        delete next[request.requestId];
+        return next;
+      });
+      return;
+    } catch (error) {
+      const message = toUserMessage(error);
+      setErrorMessage(message);
+      updateCredentialForm(request, (state) => ({
+        ...state,
+        isSubmitting: false,
+        error: message,
+      }));
+      return;
+    }
+  }, [client, dequeueCredentialRequest, sessionId, updateCredentialForm]);
+
+  const submitCredentialRequest = useCallback(async (request: CredentialRequestDTO) => {
+    const currentState = credentialFormById[request.requestId] ?? createCredentialFormState(request);
+    const mode = credentialMode(request);
+
+    let response: CredentialResponseDTO;
+    if (mode === "basic") {
+      const username = currentState.username.trim();
+      const password = currentState.password.trim();
+      if (username.length === 0 || (request.passwordRequired !== false && password.length === 0)) {
+        updateCredentialForm(request, (state) => ({
+          ...state,
+          error: "Username and password are required.",
+        }));
+        return;
+      }
+
+      response = {
+        type: "credential",
+        username,
+        password,
+        cancelled: false,
+      };
+    } else if (mode === "multi-header") {
+      const headers = Object.entries(currentState.headers).reduce<Record<string, string>>((acc, [key, value]) => {
+        const nextValue = value.trim();
+        if (nextValue.length > 0) {
+          acc[key] = nextValue;
+        }
+        return acc;
+      }, {});
+
+      if (Object.keys(headers).length === 0) {
+        updateCredentialForm(request, (state) => ({
+          ...state,
+          error: "Enter at least one credential header value.",
+        }));
+        return;
+      }
+
+      response = {
+        type: "credential",
+        headers,
+        cancelled: false,
+      };
+    } else {
+      const value = currentState.value.trim();
+      if (value.length === 0) {
+        updateCredentialForm(request, (state) => ({
+          ...state,
+          error: "Credential value is required.",
+        }));
+        return;
+      }
+
+      response = {
+        type: "credential",
+        value,
+        cancelled: false,
+      };
+    }
+
+    await respondToCredentialRequest(request, response);
+  }, [credentialFormById, respondToCredentialRequest, updateCredentialForm]);
+
+  const uploadAttachmentDraft = useCallback(async (draft: AttachmentDraft) => {
+    if (!sessionId || !client) {
+      return;
+    }
+
+    setAttachmentDrafts((current) =>
+      current.map((currentDraft) =>
+        currentDraft.localId === draft.localId
+          ? {
+              ...currentDraft,
+              status: "uploading",
+              error: null,
+            }
+          : currentDraft,
+      ),
+    );
+
+    try {
+      const uploaded = await client.uploadAttachment(sessionId, {
+        name: draft.name,
+        mimeType: draft.mimeType,
+        data: draft.data,
+      });
+
+      setAttachmentDrafts((current) =>
+        current.map((currentDraft) =>
+          currentDraft.localId === draft.localId
+            ? {
+                ...currentDraft,
+                status: "ready",
+                error: null,
+                attachmentId: uploaded.id,
+                size: uploaded.size,
+                mimeType: uploaded.mimeType,
+              }
+            : currentDraft,
+        ),
+      );
+    } catch (error) {
+      const message = toUserMessage(error);
+      setErrorMessage(message);
+      setAttachmentDrafts((current) =>
+        current.map((currentDraft) =>
+          currentDraft.localId === draft.localId
+            ? {
+                ...currentDraft,
+                status: "error",
+                error: message,
+              }
+            : currentDraft,
+        ),
+      );
+    }
+  }, [client, sessionId]);
+
+  const retryAttachmentUpload = useCallback((localId: string) => {
+    const draft = attachmentDrafts.find((item) => item.localId === localId);
+    if (!draft) {
+      return;
+    }
+
+    void uploadAttachmentDraft(draft);
+  }, [attachmentDrafts, uploadAttachmentDraft]);
+
+  const removeAttachmentDraft = useCallback((localId: string) => {
+    setAttachmentDrafts((current) => current.filter((draft) => draft.localId !== localId));
+  }, []);
+
+  const showAttachmentPicker = useCallback(() => {
+    if (!sessionId || !client) {
+      setErrorMessage("Runtime connection unavailable.");
+      return;
+    }
+
+    void (async () => {
+      try {
+        const picked = await File.pickFileAsync();
+        const file = Array.isArray(picked) ? picked[0] : picked;
+        if (!file) {
+          return;
+        }
+
+        const name = deriveFileName(file.uri);
+        const mimeType = guessMimeType(name, file.type ?? "");
+        const data = await file.base64();
+
+        const draft: AttachmentDraft = {
+          localId: `upload-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
+          name,
+          mimeType,
+          size: file.size,
+          data,
+          status: "uploading",
+          error: null,
+        };
+
+        setAttachmentDrafts((current) => [...current, draft]);
+        await uploadAttachmentDraft(draft);
+      } catch (error) {
+        if (isCancelledError(error)) {
+          return;
+        }
+
+        setErrorMessage(toUserMessage(error));
+      }
+    })();
+  }, [client, sessionId, uploadAttachmentDraft]);
 
   const styles = useMemo(
     () =>
@@ -572,6 +1160,16 @@ export default function SessionScreen() {
           justifyContent: "space-between",
           paddingHorizontal: theme.spacing.md,
           paddingVertical: theme.spacing.sm,
+        },
+        headerMetaRow: {
+          alignItems: "center",
+          backgroundColor: theme.colors.paper,
+          borderBottomColor: theme.colors.navigator,
+          borderBottomWidth: 1,
+          flexDirection: "row",
+          gap: theme.spacing.xs,
+          paddingHorizontal: theme.spacing.md,
+          paddingVertical: theme.spacing.xs,
         },
         headerLeft: {
           alignItems: "center",
@@ -596,6 +1194,14 @@ export default function SessionScreen() {
           fontSize: theme.typography.fontSize.xs,
           fontWeight: theme.typography.mono.fontWeight,
           lineHeight: theme.typography.mono.lineHeight,
+        },
+        metaText: {
+          color: theme.colors.foreground,
+          fontFamily: theme.typography.mono.fontFamily,
+          fontSize: theme.typography.fontSize.xs,
+          fontWeight: theme.typography.mono.fontWeight,
+          lineHeight: theme.typography.mono.lineHeight,
+          opacity: 0.7,
         },
         headerRight: {
           alignItems: "center",
@@ -634,8 +1240,11 @@ export default function SessionScreen() {
         rowAssistant: {
           alignItems: "flex-start",
         },
+        rowStatus: {
+          alignItems: "center",
+        },
         bubbleBase: {
-          borderColor: theme.colors.foreground,
+          borderColor: theme.colors.navigator,
           borderRadius: theme.radius.lg,
           borderWidth: 1,
           maxWidth: "94%",
@@ -644,14 +1253,31 @@ export default function SessionScreen() {
           paddingVertical: theme.spacing.sm,
         },
         bubbleUser: {
-          backgroundColor: theme.colors.navigator,
+          backgroundColor: theme.colors.accent,
+          borderColor: theme.colors.accent,
         },
         bubbleAssistant: {
           backgroundColor: theme.colors.paper,
         },
         bubbleStatus: {
-          backgroundColor: theme.colors.background,
+          backgroundColor: theme.colors.paper,
           borderColor: theme.colors.navigator,
+          maxWidth: "100%",
+        },
+        bubbleInfo: {
+          backgroundColor: theme.colors.paper,
+          borderColor: theme.colors.info,
+          maxWidth: "100%",
+        },
+        bubbleWarning: {
+          backgroundColor: theme.colors.paper,
+          borderColor: theme.colors.destructive,
+          maxWidth: "100%",
+        },
+        bubblePlan: {
+          backgroundColor: theme.colors.paper,
+          borderColor: theme.colors.accent,
+          maxWidth: "100%",
         },
         bubbleError: {
           backgroundColor: theme.colors.paper,
@@ -666,6 +1292,12 @@ export default function SessionScreen() {
           fontSize: theme.typography.body.fontSize,
           fontWeight: theme.typography.body.fontWeight,
           lineHeight: theme.typography.body.lineHeight,
+        },
+        userMessageText: {
+          color: theme.colors.background,
+        },
+        errorMessageText: {
+          color: theme.colors.destructive,
         },
         codeText: {
           color: theme.colors.foreground,
@@ -691,6 +1323,34 @@ export default function SessionScreen() {
           marginTop: 4,
           textAlign: "right",
         },
+        userMeta: {
+          color: theme.colors.background,
+          opacity: 0.75,
+        },
+        eventLabel: {
+          fontFamily: theme.typography.mono.fontFamily,
+          fontSize: theme.typography.fontSize.xs,
+          fontWeight: "700",
+          lineHeight: theme.typography.mono.lineHeight,
+          marginBottom: 4,
+          opacity: 0.85,
+          textTransform: "uppercase",
+        },
+        eventLabelStatus: {
+          color: theme.colors.info,
+        },
+        eventLabelInfo: {
+          color: theme.colors.info,
+        },
+        eventLabelWarning: {
+          color: theme.colors.destructive,
+        },
+        eventLabelPlan: {
+          color: theme.colors.accent,
+        },
+        eventLabelError: {
+          color: theme.colors.destructive,
+        },
         toolHeader: {
           alignItems: "center",
           flexDirection: "row",
@@ -705,6 +1365,54 @@ export default function SessionScreen() {
           fontWeight: "700",
           lineHeight: theme.typography.body.lineHeight,
         },
+        toolPreviewBlock: {
+          borderTopColor: theme.colors.navigator,
+          borderTopWidth: 1,
+          gap: 2,
+          marginTop: theme.spacing.xs,
+          paddingTop: theme.spacing.xs,
+        },
+        toolPreviewLine: {
+          color: theme.colors.foreground,
+          fontFamily: theme.typography.mono.fontFamily,
+          fontSize: theme.typography.fontSize.xs,
+          fontWeight: theme.typography.mono.fontWeight,
+          lineHeight: theme.typography.mono.lineHeight,
+          opacity: 0.75,
+        },
+        toolExpandHint: {
+          color: theme.colors.info,
+          fontFamily: theme.typography.mono.fontFamily,
+          fontSize: theme.typography.fontSize.xs,
+          fontWeight: theme.typography.mono.fontWeight,
+          lineHeight: theme.typography.mono.lineHeight,
+          marginTop: theme.spacing.xs,
+        },
+        sectionLabel: {
+          color: theme.colors.info,
+          fontFamily: theme.typography.mono.fontFamily,
+          fontSize: theme.typography.fontSize.xs,
+          fontWeight: "700",
+          lineHeight: theme.typography.mono.lineHeight,
+          textTransform: "uppercase",
+        },
+        assistantStreaming: {
+          color: theme.colors.accent,
+          fontFamily: theme.typography.mono.fontFamily,
+          fontSize: theme.typography.fontSize.xs,
+          fontWeight: theme.typography.mono.fontWeight,
+          lineHeight: theme.typography.mono.lineHeight,
+          marginTop: 4,
+        },
+        intermediateText: {
+          color: theme.colors.info,
+          fontFamily: theme.typography.mono.fontFamily,
+          fontSize: theme.typography.fontSize.xs,
+          fontWeight: theme.typography.mono.fontWeight,
+          lineHeight: theme.typography.mono.lineHeight,
+          marginTop: 4,
+          opacity: 0.9,
+        },
         toolBody: {
           borderTopColor: theme.colors.navigator,
           borderTopWidth: 1,
@@ -712,13 +1420,81 @@ export default function SessionScreen() {
           marginTop: theme.spacing.xs,
           paddingTop: theme.spacing.xs,
         },
+        requestBadgeRow: {
+          alignItems: "center",
+          flexDirection: "row",
+          flexWrap: "wrap",
+          gap: theme.spacing.xs,
+          marginBottom: theme.spacing.xs,
+        },
+        requestActions: {
+          flexDirection: "row",
+          flexWrap: "wrap",
+          gap: theme.spacing.xs,
+          marginTop: theme.spacing.sm,
+        },
+        requestErrorText: {
+          color: theme.colors.destructive,
+          fontFamily: theme.typography.body.fontFamily,
+          fontSize: theme.typography.fontSize.xs,
+          fontWeight: theme.typography.body.fontWeight,
+          lineHeight: theme.typography.body.lineHeight,
+          marginTop: theme.spacing.xs,
+        },
+        credentialForm: {
+          gap: theme.spacing.xs,
+          marginTop: theme.spacing.sm,
+        },
         jumpToLiveWrap: {
           alignItems: "center",
           bottom: 88,
           position: "absolute",
           right: theme.spacing.md,
         },
+        attachmentQueue: {
+          backgroundColor: theme.colors.paper,
+          borderTopColor: theme.colors.navigator,
+          borderTopWidth: 1,
+          gap: theme.spacing.xs,
+          paddingHorizontal: theme.spacing.sm,
+          paddingVertical: theme.spacing.xs,
+        },
+        attachmentRow: {
+          alignItems: "center",
+          borderColor: theme.colors.navigator,
+          borderRadius: theme.radius.md,
+          borderWidth: 1,
+          flexDirection: "row",
+          gap: theme.spacing.xs,
+          justifyContent: "space-between",
+          paddingHorizontal: theme.spacing.sm,
+          paddingVertical: theme.spacing.xs,
+        },
+        attachmentMeta: {
+          flex: 1,
+          gap: 2,
+        },
+        attachmentName: {
+          color: theme.colors.foreground,
+          fontFamily: theme.typography.body.fontFamily,
+          fontSize: theme.typography.fontSize.sm,
+          fontWeight: "700",
+          lineHeight: theme.typography.body.lineHeight,
+        },
+        attachmentDetail: {
+          color: theme.colors.info,
+          fontFamily: theme.typography.mono.fontFamily,
+          fontSize: theme.typography.fontSize.xs,
+          fontWeight: theme.typography.mono.fontWeight,
+          lineHeight: theme.typography.mono.lineHeight,
+        },
+        attachmentActions: {
+          alignItems: "center",
+          flexDirection: "row",
+          gap: theme.spacing.xs,
+        },
         composerWrap: {
+          backgroundColor: theme.colors.paper,
           borderTopColor: theme.colors.navigator,
           borderTopWidth: 1,
           flexDirection: "row",
@@ -739,6 +1515,21 @@ export default function SessionScreen() {
           flex: 1,
           justifyContent: "center",
         },
+        emptyTimeline: {
+          alignItems: "center",
+          justifyContent: "center",
+          paddingHorizontal: theme.spacing.lg,
+          paddingVertical: theme.spacing["2xl"],
+        },
+        emptyTimelineText: {
+          color: theme.colors.foreground,
+          fontFamily: theme.typography.body.fontFamily,
+          fontSize: theme.typography.body.fontSize,
+          fontWeight: theme.typography.body.fontWeight,
+          lineHeight: theme.typography.body.lineHeight,
+          opacity: 0.75,
+          textAlign: "center",
+        },
         pendingQueueBar: {
           alignItems: "center",
           backgroundColor: theme.colors.paper,
@@ -749,6 +1540,12 @@ export default function SessionScreen() {
           paddingHorizontal: theme.spacing.md,
           paddingVertical: theme.spacing.xs,
         },
+        footer: {
+          borderTopColor: theme.colors.navigator,
+          borderTopWidth: 1,
+          paddingHorizontal: theme.spacing.md,
+          paddingVertical: theme.spacing.xs,
+        },
       }),
     [theme],
   );
@@ -756,13 +1553,25 @@ export default function SessionScreen() {
   const renderMessage = ({ item }: { item: SessionMessage }) => {
     const variant = messageBubbleVariant(item);
     const isToolExpanded = Boolean(expandedToolMessageIds[item.id]);
+    const itemEventLabel = eventLabel(variant);
 
-    const rowStyle = variant === "user" ? styles.rowUser : styles.rowAssistant;
+    const rowStyle =
+      variant === "user"
+        ? styles.rowUser
+        : variant === "status" || variant === "info" || variant === "warning" || variant === "plan"
+          ? styles.rowStatus
+          : styles.rowAssistant;
     const bubbleStyle =
       variant === "user"
         ? styles.bubbleUser
         : variant === "status"
           ? styles.bubbleStatus
+          : variant === "info"
+            ? styles.bubbleInfo
+            : variant === "warning"
+              ? styles.bubbleWarning
+              : variant === "plan"
+                ? styles.bubblePlan
           : variant === "error"
             ? styles.bubbleError
             : variant === "tool"
@@ -770,6 +1579,9 @@ export default function SessionScreen() {
               : styles.bubbleAssistant;
 
     if (variant === "tool") {
+      const inputPreview = summarizeToolInput(item.toolInput);
+      const resultPreview = summarizeToolResult(item.toolResult);
+
       return (
         <View style={[styles.rowBase, rowStyle]}>
           <Pressable
@@ -780,47 +1592,284 @@ export default function SessionScreen() {
               <Text numberOfLines={1} style={styles.toolTitle}>
                 {item.toolName ?? "Tool"}
               </Text>
-              <Badge variant={item.toolStatus === "error" ? "destructive" : "outline"}>
+              <Badge variant={toolStatusBadgeVariant(item.toolStatus)}>
                 {item.toolStatus ?? "executing"}
               </Badge>
             </View>
+
+            {!isToolExpanded && (inputPreview || resultPreview) ? (
+              <View style={styles.toolPreviewBlock}>
+                {inputPreview ? <Text style={styles.toolPreviewLine}>in: {inputPreview}</Text> : null}
+                {resultPreview ? <Text style={styles.toolPreviewLine}>out: {resultPreview}</Text> : null}
+              </View>
+            ) : null}
 
             {isToolExpanded ? (
               <View style={styles.toolBody}>
                 {item.toolInput ? (
                   <>
-                    <Text style={styles.subtitle}>Input</Text>
+                    <Text style={styles.sectionLabel}>Input</Text>
                     <Text style={styles.codeText}>{JSON.stringify(item.toolInput, null, 2)}</Text>
                   </>
                 ) : null}
 
                 {item.toolResult ? (
                   <>
-                    <Text style={styles.subtitle}>Result</Text>
+                    <Text style={styles.sectionLabel}>Result</Text>
                     <Text style={styles.messageText}>{item.toolResult}</Text>
                   </>
                 ) : null}
               </View>
             ) : null}
 
+            {!isToolExpanded ? <Text style={styles.toolExpandHint}>Tap to expand</Text> : null}
             <Text style={styles.messageMeta}>{formatAbsoluteTime(item.timestamp)}</Text>
           </Pressable>
         </View>
       );
     }
 
+    const messageTextStyle =
+      variant === "user"
+        ? styles.userMessageText
+        : variant === "error"
+          ? styles.errorMessageText
+          : undefined;
+    const messageMetaStyle = variant === "user" ? styles.userMeta : undefined;
+    const eventLabelStyle =
+      variant === "warning"
+        ? styles.eventLabelWarning
+        : variant === "plan"
+          ? styles.eventLabelPlan
+          : variant === "status"
+            ? styles.eventLabelStatus
+            : variant === "info"
+              ? styles.eventLabelInfo
+              : variant === "error"
+                ? styles.eventLabelError
+                : undefined;
+
     return (
       <View style={[styles.rowBase, rowStyle]}>
         <View style={[styles.bubbleBase, bubbleStyle]}>
-          <Text style={styles.messageText}>{item.content}</Text>
+          {itemEventLabel ? <Text style={[styles.eventLabel, eventLabelStyle]}>{itemEventLabel}</Text> : null}
+          <Text style={[styles.messageText, messageTextStyle]}>{item.content}</Text>
+          {item.role === "assistant" && item.isStreaming ? (
+            <Text style={styles.assistantStreaming}>Streaming...</Text>
+          ) : null}
+          {item.isIntermediate ? <Text style={styles.intermediateText}>Intermediate output</Text> : null}
           {item.isPending ? <Text style={styles.pendingText}>Pending...</Text> : null}
-          <Text style={styles.messageMeta}>{formatAbsoluteTime(item.timestamp)}</Text>
+          <Text style={[styles.messageMeta, messageMetaStyle]}>{formatAbsoluteTime(item.timestamp)}</Text>
         </View>
       </View>
     );
   };
 
+  const renderPermissionRequest = (request: PermissionRequestDTO) => {
+    const actionState = permissionActionById[request.requestId] ?? {
+      isSubmitting: false,
+      error: null,
+    };
+
+    return (
+      <View style={[styles.rowBase, styles.rowStatus]}>
+        <View style={[styles.bubbleBase, styles.bubbleWarning]}>
+          <Text style={[styles.eventLabel, styles.eventLabelWarning]}>Permission Request</Text>
+          <View style={styles.requestBadgeRow}>
+            <Badge variant="outline">{request.toolName || "Tool"}</Badge>
+            {request.type ? <Badge variant="secondary">{request.type}</Badge> : null}
+          </View>
+          <Text style={styles.messageText}>{request.description}</Text>
+          {request.command ? <Text style={styles.codeText}>{request.command}</Text> : null}
+
+          <View style={styles.requestActions}>
+            <Button
+              disabled={actionState.isSubmitting}
+              onPress={() => {
+                void respondToPermissionRequest(request, {
+                  allowed: false,
+                  alwaysAllow: false,
+                });
+              }}
+              size="sm"
+              variant="destructive"
+            >
+              Deny
+            </Button>
+            <Button
+              disabled={actionState.isSubmitting}
+              onPress={() => {
+                void respondToPermissionRequest(request, {
+                  allowed: true,
+                  alwaysAllow: false,
+                });
+              }}
+              size="sm"
+              variant="secondary"
+            >
+              Allow Once
+            </Button>
+            <Button
+              disabled={actionState.isSubmitting}
+              onPress={() => {
+                void respondToPermissionRequest(request, {
+                  allowed: true,
+                  alwaysAllow: true,
+                  options: {
+                    rememberForMinutes: 15,
+                  },
+                });
+              }}
+              size="sm"
+            >
+              Allow 15m
+            </Button>
+          </View>
+
+          {actionState.error ? <Text style={styles.requestErrorText}>{actionState.error}</Text> : null}
+          {actionState.isSubmitting ? <Text style={styles.pendingText}>Submitting...</Text> : null}
+        </View>
+      </View>
+    );
+  };
+
+  const renderCredentialRequest = (request: CredentialRequestDTO) => {
+    const mode = credentialMode(request);
+    const formState = credentialFormById[request.requestId] ?? createCredentialFormState(request);
+    const submitting = formState.isSubmitting;
+
+    const headerKeys = Object.keys(formState.headers).length > 0
+      ? Object.keys(formState.headers)
+      : request.headerNames?.length
+        ? request.headerNames
+        : request.headerName
+          ? [request.headerName]
+          : ["Authorization"];
+
+    return (
+      <View style={[styles.rowBase, styles.rowStatus]}>
+        <View style={[styles.bubbleBase, styles.bubbleInfo]}>
+          <Text style={[styles.eventLabel, styles.eventLabelInfo]}>Credential Request</Text>
+          <View style={styles.requestBadgeRow}>
+            <Badge variant="outline">{request.sourceName ?? request.sourceSlug ?? "Source"}</Badge>
+            <Badge variant="secondary">{mode}</Badge>
+          </View>
+
+          {request.description ? <Text style={styles.messageText}>{request.description}</Text> : null}
+          {request.hint ? <Text style={styles.intermediateText}>{request.hint}</Text> : null}
+
+          <View style={styles.credentialForm}>
+            {mode === "basic" ? (
+              <>
+                <ThemedTextInput
+                  autoCapitalize="none"
+                  onChangeText={(value: string) => {
+                    updateCredentialForm(request, (state) => ({
+                      ...state,
+                      username: value,
+                      error: null,
+                    }));
+                  }}
+                  placeholder={request.labels?.username ?? "Username"}
+                  value={formState.username}
+                />
+                <ThemedTextInput
+                  autoCapitalize="none"
+                  onChangeText={(value: string) => {
+                    updateCredentialForm(request, (state) => ({
+                      ...state,
+                      password: value,
+                      error: null,
+                    }));
+                  }}
+                  placeholder={request.labels?.password ?? "Password"}
+                  secureTextEntry
+                  value={formState.password}
+                />
+              </>
+            ) : mode === "multi-header" ? (
+              <>
+                {headerKeys.map((headerKey) => (
+                  <ThemedTextInput
+                    autoCapitalize="none"
+                    key={`${request.requestId}:${headerKey}`}
+                    onChangeText={(value: string) => {
+                      updateCredentialForm(request, (state) => ({
+                        ...state,
+                        headers: {
+                          ...state.headers,
+                          [headerKey]: value,
+                        },
+                        error: null,
+                      }));
+                    }}
+                    placeholder={`${headerKey} value`}
+                    value={formState.headers[headerKey] ?? ""}
+                  />
+                ))}
+              </>
+            ) : (
+              <ThemedTextInput
+                autoCapitalize="none"
+                onChangeText={(value: string) => {
+                  updateCredentialForm(request, (state) => ({
+                    ...state,
+                    value,
+                    error: null,
+                  }));
+                }}
+                placeholder={request.labels?.credential ?? "Credential value"}
+                value={formState.value}
+              />
+            )}
+          </View>
+
+          <View style={styles.requestActions}>
+            <Button
+              disabled={submitting}
+              onPress={() => {
+                void respondToCredentialRequest(request, {
+                  type: "credential",
+                  cancelled: true,
+                });
+              }}
+              size="sm"
+              variant="outline"
+            >
+              Cancel
+            </Button>
+            <Button
+              disabled={submitting}
+              onPress={() => {
+                void submitCredentialRequest(request);
+              }}
+              size="sm"
+            >
+              Submit
+            </Button>
+          </View>
+
+          {formState.error ? <Text style={styles.requestErrorText}>{formState.error}</Text> : null}
+          {submitting ? <Text style={styles.pendingText}>Submitting...</Text> : null}
+        </View>
+      </View>
+    );
+  };
+
+  const renderTimelineItem = ({ item }: { item: TimelineItem }) => {
+    if (item.kind === "message") {
+      return renderMessage({ item: item.message });
+    }
+
+    if (item.kind === "permission") {
+      return renderPermissionRequest(item.request);
+    }
+
+    return renderCredentialRequest(item.request);
+  };
+
   const currentConnectionTone = connectionTone(streamState, Boolean(errorMessage));
+  const statusLabel = sessionStatusLabel(session);
 
   return (
     <SafeAreaView edges={["top", "bottom"]} style={styles.safeArea}>
@@ -865,6 +1914,13 @@ export default function SessionScreen() {
             </Button>
           </View>
         </View>
+        <View style={styles.headerMetaRow}>
+          <Badge variant={sessionStatusBadgeVariant(session)}>{statusLabel}</Badge>
+          <Badge variant="outline">mode: {permissionModeLabel(session?.permissionMode)}</Badge>
+          <Text numberOfLines={1} style={styles.metaText}>
+            {messages.length} messages · {permissionRequests.length + credentialRequests.length} requests
+          </Text>
+        </View>
 
         {errorMessage ? (
           <View style={styles.errorBanner}>
@@ -881,8 +1937,15 @@ export default function SessionScreen() {
             <>
               <FlatList
                 contentContainerStyle={styles.timelineContent}
-                data={messages}
-                keyExtractor={(item) => item.id}
+                data={timelineItems}
+                keyExtractor={(item) => item.key}
+                ListEmptyComponent={
+                  <View style={styles.emptyTimeline}>
+                    <Text style={styles.emptyTimelineText}>
+                      No messages yet. Send your first prompt to continue this session on mobile.
+                    </Text>
+                  </View>
+                }
                 onContentSizeChange={() => {
                   if (autoFollow) {
                     scrollToBottom(isProcessing);
@@ -890,7 +1953,7 @@ export default function SessionScreen() {
                 }}
                 onScroll={handleScroll}
                 ref={listRef}
-                renderItem={renderMessage}
+                renderItem={renderTimelineItem}
                 scrollEventThrottle={16}
               />
 
@@ -918,6 +1981,43 @@ export default function SessionScreen() {
             <Button onPress={() => void replayPendingQueue()} size="sm" variant="outline">
               Retry
             </Button>
+          </View>
+        ) : null}
+
+        {attachmentDrafts.length > 0 ? (
+          <View style={styles.attachmentQueue}>
+            {attachmentDrafts.map((attachment) => (
+              <View key={attachment.localId} style={styles.attachmentRow}>
+                <View style={styles.attachmentMeta}>
+                  <Text numberOfLines={1} style={styles.attachmentName}>
+                    {attachment.name}
+                  </Text>
+                  <Text numberOfLines={1} style={styles.attachmentDetail}>
+                    {formatBytes(attachment.size)} · {attachment.status}
+                  </Text>
+                  {attachment.error ? <Text style={styles.requestErrorText}>{attachment.error}</Text> : null}
+                </View>
+
+                <View style={styles.attachmentActions}>
+                  {attachment.status === "error" ? (
+                    <Button
+                      onPress={() => retryAttachmentUpload(attachment.localId)}
+                      size="sm"
+                      variant="outline"
+                    >
+                      Retry
+                    </Button>
+                  ) : null}
+                  <Button
+                    onPress={() => removeAttachmentDraft(attachment.localId)}
+                    size="sm"
+                    variant="ghost"
+                  >
+                    Remove
+                  </Button>
+                </View>
+              </View>
+            ))}
           </View>
         ) : null}
 
@@ -961,7 +2061,7 @@ export default function SessionScreen() {
           )}
         </View>
 
-        <View style={{ paddingHorizontal: theme.spacing.md, paddingBottom: theme.spacing.xs }}>
+        <View style={styles.footer}>
           <Button onPress={() => handleRepairDevice()} variant="ghost">
             Re-pair Device
           </Button>

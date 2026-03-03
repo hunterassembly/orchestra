@@ -478,6 +478,12 @@ const api: ElectronAPI = {
     ipcRenderer.invoke(IPC_CHANNELS.INPUT_GET_SPELL_CHECK) as Promise<boolean>,
   setSpellCheck: (enabled: boolean) =>
     ipcRenderer.invoke(IPC_CHANNELS.INPUT_SET_SPELL_CHECK, enabled),
+  getPushToTalkWhisper: () =>
+    ipcRenderer.invoke(IPC_CHANNELS.INPUT_GET_PUSH_TO_TALK_WHISPER) as Promise<boolean>,
+  setPushToTalkWhisper: (enabled: boolean) =>
+    ipcRenderer.invoke(IPC_CHANNELS.INPUT_SET_PUSH_TO_TALK_WHISPER, enabled),
+  transcribeWithLocalWhisper: (audioBase64: string, mimeType: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.INPUT_TRANSCRIBE_LOCAL_WHISPER, audioBase64, mimeType) as Promise<string>,
 
   // Power settings
   getKeepAwakeWhileRunning: () =>

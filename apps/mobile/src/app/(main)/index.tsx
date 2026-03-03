@@ -9,6 +9,7 @@ import {
   PanResponder,
   Pressable,
   RefreshControl,
+  ScrollView,
   StyleSheet,
   Text,
   View,
@@ -262,13 +263,25 @@ function SessionListItem({
         },
         card: {
           backgroundColor: theme.colors.paper,
-          borderColor: theme.colors.foreground,
+          borderColor: theme.colors.navigator,
           borderRadius: theme.radius.lg,
           borderWidth: 1,
           gap: theme.spacing.xs,
           minHeight: 84,
           paddingHorizontal: theme.spacing.md,
           paddingVertical: theme.spacing.sm,
+        },
+        cardPending: {
+          opacity: 0.65,
+        },
+        unreadStripe: {
+          backgroundColor: theme.colors.accent,
+          borderRadius: theme.radius.sm,
+          bottom: theme.spacing.xs,
+          left: 0,
+          position: "absolute",
+          top: theme.spacing.xs,
+          width: 3,
         },
         row: {
           alignItems: "center",
@@ -303,20 +316,28 @@ function SessionListItem({
           fontWeight: theme.typography.mono.fontWeight,
           lineHeight: theme.typography.mono.lineHeight,
         },
-        subtitleRow: {
+        preview: {
+          color: theme.colors.foreground,
+          fontFamily: theme.typography.body.fontFamily,
+          fontSize: theme.typography.fontSize.sm,
+          fontWeight: theme.typography.body.fontWeight,
+          lineHeight: theme.typography.body.lineHeight,
+          opacity: 0.7,
+        },
+        metaRow: {
           alignItems: "center",
           flexDirection: "row",
           gap: theme.spacing.xs,
           justifyContent: "space-between",
         },
-        subtitle: {
+        workspaceName: {
           color: theme.colors.foreground,
           flexShrink: 1,
           fontFamily: theme.typography.body.fontFamily,
-          fontSize: theme.typography.fontSize.sm,
+          fontSize: theme.typography.fontSize.xs,
           fontWeight: theme.typography.body.fontWeight,
           lineHeight: theme.typography.body.lineHeight,
-          opacity: 0.75,
+          opacity: 0.65,
         },
       }),
     [theme],
@@ -359,8 +380,9 @@ function SessionListItem({
             disabled={pending}
             onLongPress={() => onLongPress(session)}
             onPress={handlePress}
-            style={styles.card}
+            style={[styles.card, pending ? styles.cardPending : undefined]}
           >
+            {session.hasUnread ? <View style={styles.unreadStripe} /> : null}
             <View style={styles.row}>
               <View style={styles.titleWrap}>
                 {session.hasUnread ? <View style={styles.unreadDot} /> : null}
@@ -371,8 +393,12 @@ function SessionListItem({
               <Text style={styles.timestamp}>{formatRelativeTime(session.lastMessageAt, now)}</Text>
             </View>
 
-            <View style={styles.subtitleRow}>
-              <Text numberOfLines={1} style={styles.subtitle}>
+            <Text numberOfLines={2} style={styles.preview}>
+              {session.preview?.trim() || "No messages yet"}
+            </Text>
+
+            <View style={styles.metaRow}>
+              <Text numberOfLines={1} style={styles.workspaceName}>
                 {workspaceName}
               </Text>
               <Badge variant={statusVariant(session)}>{statusLabel(session)}</Badge>
@@ -806,14 +832,20 @@ export default function MainIndexScreen() {
         },
         container: {
           flex: 1,
+        },
+        topRail: {
+          backgroundColor: theme.colors.paper,
+          borderBottomColor: theme.colors.navigator,
+          borderBottomWidth: 1,
+          paddingBottom: theme.spacing.sm,
           paddingHorizontal: theme.spacing.md,
-          paddingTop: theme.spacing.md,
+          paddingTop: theme.spacing.sm,
         },
         header: {
           alignItems: "center",
           flexDirection: "row",
           justifyContent: "space-between",
-          marginBottom: theme.spacing.sm,
+          marginBottom: theme.spacing.xs,
         },
         title: {
           color: theme.colors.foreground,
@@ -829,12 +861,20 @@ export default function MainIndexScreen() {
         },
         workspaceRow: {
           flexDirection: "row",
-          flexWrap: "wrap",
           gap: theme.spacing.xs,
-          marginBottom: theme.spacing.sm,
+          paddingRight: theme.spacing.md,
+        },
+        workspaceScroller: {
+          flexGrow: 0,
+          marginTop: theme.spacing.xs,
         },
         workspaceButton: {
-          minHeight: 32,
+          minHeight: 30,
+        },
+        body: {
+          flex: 1,
+          paddingHorizontal: theme.spacing.md,
+          paddingTop: theme.spacing.sm,
         },
         alertBanner: {
           backgroundColor: theme.colors.paper,
@@ -853,6 +893,7 @@ export default function MainIndexScreen() {
           lineHeight: theme.typography.body.lineHeight,
         },
         listContent: {
+          flexGrow: 1,
           paddingBottom: theme.spacing.xl,
         },
         emptyState: {
@@ -945,83 +986,94 @@ export default function MainIndexScreen() {
   return (
     <SafeAreaView edges={["top", "bottom"]} style={styles.safeArea}>
       <View style={styles.container}>
-        <View style={styles.header}>
-          <Text style={styles.title}>Sessions</Text>
+        <View style={styles.topRail}>
+          <View style={styles.header}>
+            <Text style={styles.title}>Sessions</Text>
 
-          <View style={styles.headerActions}>
-            <ConnectionChip
-              label={connectionLabel}
-              onPress={() => {
-                Alert.alert(
-                  "Connection Status",
-                  [
-                    `Host: ${runtimeHost ?? "not configured"}`,
-                    `State: ${connectionLabel}`,
-                    `Workspaces: ${workspaces.length}`,
-                    `Last Sync: ${lastSyncAt ? formatRelativeTime(lastSyncAt, now) : "never"}`,
-                  ].join("\n"),
-                );
-              }}
-              tone={connectionTone}
-            />
-
-            <Button
-              disabled={!activeWorkspaceId || isCreatingSession || connectionTone === "offline"}
-              onPress={() => handleCreateSession()}
-              size="icon"
-            >
-              {isCreatingSession ? <ActivityIndicator color={theme.colors.background} /> : "+"}
-            </Button>
-          </View>
-        </View>
-
-        <View style={styles.workspaceRow}>
-          {workspaces.map((workspace) => {
-            const active = workspace.id === activeWorkspaceId;
-            return (
-              <Button
-                key={workspace.id}
-                onPress={() => void handleSelectWorkspace(workspace.id)}
-                size="sm"
-                style={styles.workspaceButton}
-                variant={active ? "default" : "outline"}
-              >
-                {workspace.name}
-              </Button>
-            );
-          })}
-        </View>
-
-        {errorMessage ? (
-          <View style={styles.alertBanner}>
-            <Text style={styles.alertText}>{errorMessage}</Text>
-          </View>
-        ) : null}
-
-        {lastSyncAt ? <Text style={styles.syncMeta}>Last sync: {formatRelativeTime(lastSyncAt, now)}</Text> : null}
-
-        <FlatList
-          contentContainerStyle={styles.listContent}
-          data={sessions}
-          keyExtractor={(session) => session.id}
-          ListEmptyComponent={renderEmptyState}
-          refreshControl={<RefreshControl onRefresh={handleRefresh} refreshing={isRefreshing} />}
-          renderItem={({ item }) => {
-            return (
-              <SessionListItem
-                disabled={connectionTone === "offline"}
-                now={now}
-                onDelete={handleDeleteSession}
-                onLongPress={handleLongPressSession}
-                onOpen={(session) => router.push(`/(main)/session/${session.id}`)}
-                onToggleRead={handleToggleRead}
-                pending={pendingSessionId === item.id}
-                session={item}
-                workspaceName={workspaceNameById.get(item.workspaceId) ?? item.workspaceId}
+            <View style={styles.headerActions}>
+              <ConnectionChip
+                label={connectionLabel}
+                onPress={() => {
+                  Alert.alert(
+                    "Connection Status",
+                    [
+                      `Host: ${runtimeHost ?? "not configured"}`,
+                      `State: ${connectionLabel}`,
+                      `Workspaces: ${workspaces.length}`,
+                      `Last Sync: ${lastSyncAt ? formatRelativeTime(lastSyncAt, now) : "never"}`,
+                    ].join("\n"),
+                  );
+                }}
+                tone={connectionTone}
               />
-            );
-          }}
-        />
+
+              <Button
+                disabled={!activeWorkspaceId || isCreatingSession || connectionTone === "offline"}
+                onPress={() => handleCreateSession()}
+                size="icon"
+              >
+                {isCreatingSession ? <ActivityIndicator color={theme.colors.background} /> : "+"}
+              </Button>
+            </View>
+          </View>
+
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            style={styles.workspaceScroller}
+          >
+            <View style={styles.workspaceRow}>
+              {workspaces.map((workspace) => {
+                const active = workspace.id === activeWorkspaceId;
+                return (
+                  <Button
+                    key={workspace.id}
+                    onPress={() => void handleSelectWorkspace(workspace.id)}
+                    size="sm"
+                    style={styles.workspaceButton}
+                    variant={active ? "default" : "outline"}
+                  >
+                    {workspace.name}
+                  </Button>
+                );
+              })}
+            </View>
+          </ScrollView>
+        </View>
+
+        <View style={styles.body}>
+          {errorMessage ? (
+            <View style={styles.alertBanner}>
+              <Text style={styles.alertText}>{errorMessage}</Text>
+            </View>
+          ) : null}
+
+          {lastSyncAt ? <Text style={styles.syncMeta}>Last sync: {formatRelativeTime(lastSyncAt, now)}</Text> : null}
+
+          <FlatList
+            contentContainerStyle={styles.listContent}
+            data={sessions}
+            keyExtractor={(session) => session.id}
+            ListEmptyComponent={renderEmptyState}
+            refreshControl={<RefreshControl onRefresh={handleRefresh} refreshing={isRefreshing} />}
+            renderItem={({ item }) => {
+              return (
+                <SessionListItem
+                  disabled={connectionTone === "offline"}
+                  now={now}
+                  onDelete={handleDeleteSession}
+                  onLongPress={handleLongPressSession}
+                  onOpen={(session) => router.push(`/(main)/session/${session.id}`)}
+                  onToggleRead={handleToggleRead}
+                  pending={pendingSessionId === item.id}
+                  session={item}
+                  workspaceName={workspaceNameById.get(item.workspaceId) ?? item.workspaceId}
+                />
+              );
+            }}
+            showsVerticalScrollIndicator={false}
+          />
+        </View>
       </View>
     </SafeAreaView>
   );

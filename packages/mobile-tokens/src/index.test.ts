@@ -2,7 +2,16 @@ import { describe, expect, it } from 'bun:test';
 import { readFileSync } from 'node:fs';
 
 import { DEFAULT_THEME } from '../../shared/src/config/theme.ts';
-import { colors, mobileTokens, radius, semanticColors, spacing, surfaceColors, typography } from './index';
+import {
+  colors,
+  mobileTokens,
+  radius,
+  semanticColors,
+  spacing,
+  surfaceColors,
+  toReactNativeColor,
+  typography,
+} from './index';
 
 const UI_CSS_SOURCE = readFileSync(new URL('../../ui/src/styles/index.css', import.meta.url), 'utf8');
 
@@ -11,6 +20,7 @@ const ROOT_BLOCK = ROOT_BLOCK_MATCH?.[1] ?? '';
 
 const SEMANTIC_KEYS = ['background', 'foreground', 'accent', 'info', 'success', 'destructive'] as const;
 const SURFACE_KEYS = ['paper', 'navigator', 'input', 'popover', 'popoverSolid'] as const;
+const REACT_NATIVE_COLOR_RE = /^(?:#(?:[\da-f]{3}|[\da-f]{4}|[\da-f]{6}|[\da-f]{8})|(?:rgb|hsl)a?\(.+\)|[a-z]+)$/i;
 
 function getCssVariable(cssVarName: string): string {
   const escapedName = cssVarName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -35,6 +45,10 @@ function toPixels(lengthValue: string): number {
   throw new Error(`Unsupported CSS length for token extraction: ${lengthValue}`);
 }
 
+function expectedColor(value: string | undefined, fallback: string): string {
+  return toReactNativeColor(value) ?? fallback;
+}
+
 describe('mobile-tokens color parity', () => {
   it('exports complete semantic and surface tokens for light and dark modes', () => {
     expect(Object.keys(semanticColors.light).sort()).toEqual([...SEMANTIC_KEYS].sort());
@@ -46,8 +60,8 @@ describe('mobile-tokens color parity', () => {
 
   it('matches DEFAULT_THEME semantic colors for light and dark', () => {
     for (const key of SEMANTIC_KEYS) {
-      const lightValue = DEFAULT_THEME[key] ?? semanticColors.light[key];
-      const darkValue = DEFAULT_THEME.dark?.[key] ?? lightValue;
+      const lightValue = expectedColor(DEFAULT_THEME[key], semanticColors.light[key]);
+      const darkValue = expectedColor(DEFAULT_THEME.dark?.[key], lightValue);
 
       expect(semanticColors.light[key]).toEqual(lightValue);
       expect(semanticColors.dark[key]).toEqual(darkValue);
@@ -56,15 +70,29 @@ describe('mobile-tokens color parity', () => {
 
   it('matches DEFAULT_THEME surface fallback behavior for light and dark', () => {
     for (const key of SURFACE_KEYS) {
-      const lightValue = DEFAULT_THEME[key] ?? semanticColors.light.background;
+      const lightValue = expectedColor(DEFAULT_THEME[key], semanticColors.light.background);
 
-      const darkValue =
-        DEFAULT_THEME.dark?.[key] ??
-        DEFAULT_THEME[key] ??
-        semanticColors.dark.background;
+      const darkValue = expectedColor(
+        DEFAULT_THEME.dark?.[key],
+        expectedColor(DEFAULT_THEME[key], semanticColors.dark.background)
+      );
 
       expect(surfaceColors.light[key]).toEqual(lightValue);
       expect(surfaceColors.dark[key]).toEqual(darkValue);
+    }
+  });
+
+  it('exports react-native-safe color strings', () => {
+    const allColors = [
+      ...Object.values(semanticColors.light),
+      ...Object.values(semanticColors.dark),
+      ...Object.values(surfaceColors.light),
+      ...Object.values(surfaceColors.dark),
+    ];
+
+    for (const color of allColors) {
+      expect(color.toLowerCase().includes('oklch(')).toBe(false);
+      expect(REACT_NATIVE_COLOR_RE.test(color)).toBe(true);
     }
   });
 
@@ -82,12 +110,14 @@ describe('mobile-tokens color parity', () => {
 });
 
 describe('mobile-tokens typography, spacing, and radius parity', () => {
-  it('matches typography defaults extracted from packages/ui styles', () => {
-    expect(typography.fontFamily.sans as string).toEqual(getCssVariable('--font-sans'));
-    expect(typography.fontFamily.mono as string).toEqual(getCssVariable('--font-mono'));
-
+  it('matches core size defaults extracted from packages/ui styles', () => {
     const baseFontSizePx = toPixels(getCssVariable('--font-size-base'));
     expect(typography.fontSize.base as number).toEqual(baseFontSizePx);
+  });
+
+  it('exports react-native-safe font family tokens', () => {
+    expect(typography.fontFamily.sans).toEqual('System');
+    expect(typography.fontFamily.mono).toEqual('Courier');
   });
 
   it('exports body, heading, and mono text styles for React Native usage', () => {

@@ -95,7 +95,7 @@ export function parseDeepLink(url: string): DeepLinkTarget | null {
   try {
     const parsed = new URL(url)
 
-    if (parsed.protocol !== 'orchestra:') {
+    if (!parsed.protocol || parsed.protocol === ':') {
       return null
     }
 

@@ -103,6 +103,25 @@ export interface SendMessageOptionsDTO {
   skillSlugs?: string[];
 }
 
+export interface PermissionResponseOptionsDTO {
+  rememberForMinutes?: number;
+}
+
+export interface PermissionResponseDTO {
+  allowed: boolean;
+  alwaysAllow?: boolean;
+  options?: PermissionResponseOptionsDTO;
+}
+
+export interface CredentialResponseDTO {
+  type: 'credential';
+  value?: string;
+  username?: string;
+  password?: string;
+  headers?: Record<string, string>;
+  cancelled: boolean;
+}
+
 export type SessionCommandDTO =
   | { type: 'rename'; name: string }
   | { type: 'setSessionStatus'; state: SessionStatusDTO }

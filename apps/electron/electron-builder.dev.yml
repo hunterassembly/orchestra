@@ -1,0 +1,30 @@
+extends: ./electron-builder.yml
+
+appId: com.lukilabs.craft-agent.dev
+productName: Orchestra Dev
+
+extraMetadata:
+  main: dist/main.cjs
+
+publish: []
+
+protocols:
+  - name: Orchestra Dev URL
+    schemes:
+      - orchestradev
+
+mac:
+  artifactName: "Orchestra-Dev-${arch}.${ext}"
+  identity: null
+  hardenedRuntime: false
+  gatekeeperAssess: false
+
+dmg:
+  artifactName: "Orchestra-Dev-${arch}.dmg"
+  title: "Orchestra Dev"
+
+win:
+  artifactName: "Orchestra-Dev-${arch}.${ext}"
+
+linux:
+  artifactName: "Orchestra-Dev-${arch}.${ext}"

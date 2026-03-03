@@ -867,6 +867,9 @@ export const IPC_CHANNELS = {
   INPUT_SET_SEND_MESSAGE_KEY: 'input:setSendMessageKey',
   INPUT_GET_SPELL_CHECK: 'input:getSpellCheck',
   INPUT_SET_SPELL_CHECK: 'input:setSpellCheck',
+  INPUT_GET_PUSH_TO_TALK_WHISPER: 'input:getPushToTalkWhisper',
+  INPUT_SET_PUSH_TO_TALK_WHISPER: 'input:setPushToTalkWhisper',
+  INPUT_TRANSCRIBE_LOCAL_WHISPER: 'input:transcribeLocalWhisper',
 
   // Power settings
   POWER_GET_KEEP_AWAKE: 'power:getKeepAwake',
@@ -1246,6 +1249,9 @@ export interface ElectronAPI {
   setSendMessageKey(key: 'enter' | 'cmd-enter'): Promise<void>
   getSpellCheck(): Promise<boolean>
   setSpellCheck(enabled: boolean): Promise<void>
+  getPushToTalkWhisper(): Promise<boolean>
+  setPushToTalkWhisper(enabled: boolean): Promise<void>
+  transcribeWithLocalWhisper(audioBase64: string, mimeType: string): Promise<string>
 
   // Power settings
   getKeepAwakeWhileRunning(): Promise<boolean>

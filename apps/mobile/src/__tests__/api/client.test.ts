@@ -292,6 +292,27 @@ describe("api client", () => {
     });
   });
 
+  it("sendMessage(sessionId, message, options, attachments) includes attachment references", async () => {
+    mockFetch.mockResolvedValue(mockFetchResponse({ body: { status: "accepted" } }));
+
+    const client = createApiClient({ baseUrl, authStore });
+    await client.sendMessage(
+      "session-1",
+      "Hello with file",
+      { optimisticMessageId: "optimistic-2" },
+      [{ id: "att-1" }],
+    );
+
+    const [, init] = mockFetch.mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(init.body as string)).toEqual({
+      message: "Hello with file",
+      options: {
+        optimisticMessageId: "optimistic-2",
+      },
+      attachments: [{ id: "att-1" }],
+    });
+  });
+
   it("interrupt(sessionId) calls POST /api/sessions/:sessionId/interrupt", async () => {
     mockFetch.mockResolvedValue(mockFetchResponse({ body: { status: "ok" } }));
 
@@ -360,6 +381,54 @@ describe("api client", () => {
 
     const [, init] = mockFetch.mock.calls[0] as [string, RequestInit];
     expect(JSON.parse(init.body as string)).toEqual(file);
+  });
+
+  it("respondToPermission(sessionId, requestId, response) calls POST /api/sessions/:sessionId/permissions/:requestId", async () => {
+    mockFetch.mockResolvedValue(mockFetchResponse({ body: { status: "ok" } }));
+
+    const client = createApiClient({ baseUrl, authStore });
+    const response = await client.respondToPermission("session-1", "perm-1", {
+      allowed: true,
+      alwaysAllow: true,
+      options: { rememberForMinutes: 15 },
+    });
+
+    expect(response).toEqual({ status: "ok" });
+    expect(mockFetch).toHaveBeenCalledWith(
+      "http://localhost:7842/api/sessions/session-1/permissions/perm-1",
+      expect.objectContaining({ method: "POST" }),
+    );
+
+    const [, init] = mockFetch.mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(init.body as string)).toEqual({
+      allowed: true,
+      alwaysAllow: true,
+      options: { rememberForMinutes: 15 },
+    });
+  });
+
+  it("respondToCredential(sessionId, requestId, response) calls POST /api/sessions/:sessionId/credentials/:requestId", async () => {
+    mockFetch.mockResolvedValue(mockFetchResponse({ body: { status: "ok" } }));
+
+    const client = createApiClient({ baseUrl, authStore });
+    const response = await client.respondToCredential("session-1", "cred-1", {
+      type: "credential",
+      value: "secret-token",
+      cancelled: false,
+    });
+
+    expect(response).toEqual({ status: "ok" });
+    expect(mockFetch).toHaveBeenCalledWith(
+      "http://localhost:7842/api/sessions/session-1/credentials/cred-1",
+      expect.objectContaining({ method: "POST" }),
+    );
+
+    const [, init] = mockFetch.mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(init.body as string)).toEqual({
+      type: "credential",
+      value: "secret-token",
+      cancelled: false,
+    });
   });
 
   it("on 401, authenticated requests refresh token then retry once", async () => {

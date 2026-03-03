@@ -2,9 +2,12 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { randomInt, randomUUID } from 'node:crypto';
 import type {
   AttachmentDTO,
+  CredentialResponseDTO,
   CreateSessionOptionsDTO,
   PairingConfirmResponse,
   PairingStartResponse,
+  PermissionResponseDTO,
+  PermissionResponseOptionsDTO,
   PermissionModeDTO,
   SessionCommandDTO,
   SessionEventDTO,
@@ -72,6 +75,18 @@ export interface RuntimeSessionManager {
   markSessionRead: (sessionId: string) => Promise<void>;
   markSessionUnread: (sessionId: string) => Promise<void>;
   setSessionPermissionMode: (sessionId: string, mode: PermissionModeDTO) => Promise<void> | void;
+  respondToPermission: (
+    sessionId: string,
+    requestId: string,
+    allowed: boolean,
+    alwaysAllow: boolean,
+    options?: PermissionResponseOptionsDTO
+  ) => Promise<boolean>;
+  respondToCredential: (
+    sessionId: string,
+    requestId: string,
+    response: CredentialResponseDTO
+  ) => Promise<boolean>;
   cancelProcessing: (sessionId: string) => Promise<boolean>;
   killShell: (sessionId: string, shellId: string) => Promise<boolean>;
   deleteSession: (sessionId: string) => Promise<boolean>;
@@ -484,6 +499,107 @@ function parseTokenRefreshPayload(input: unknown): { refreshToken: string } | nu
 
   return {
     refreshToken: candidate.refreshToken,
+  };
+}
+
+function parsePermissionResponseOptions(input: unknown): PermissionResponseOptionsDTO | undefined | null {
+  if (input === undefined || input === null) {
+    return undefined;
+  }
+
+  if (typeof input !== 'object' || Array.isArray(input)) {
+    return null;
+  }
+
+  const candidate = input as Record<string, unknown>;
+  const options: PermissionResponseOptionsDTO = {};
+
+  if (candidate.rememberForMinutes !== undefined) {
+    if (typeof candidate.rememberForMinutes !== 'number' || !Number.isFinite(candidate.rememberForMinutes) || candidate.rememberForMinutes <= 0) {
+      return null;
+    }
+
+    options.rememberForMinutes = Math.floor(candidate.rememberForMinutes);
+  }
+
+  return options;
+}
+
+function parsePermissionResponsePayload(input: unknown): PermissionResponseDTO | null {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    return null;
+  }
+
+  const candidate = input as Record<string, unknown>;
+  if (typeof candidate.allowed !== 'boolean') {
+    return null;
+  }
+
+  if (candidate.alwaysAllow !== undefined && typeof candidate.alwaysAllow !== 'boolean') {
+    return null;
+  }
+
+  const options = parsePermissionResponseOptions(candidate.options);
+  if (options === null) {
+    return null;
+  }
+
+  return {
+    allowed: candidate.allowed,
+    alwaysAllow: candidate.alwaysAllow,
+    options,
+  };
+}
+
+function parseCredentialResponsePayload(input: unknown): CredentialResponseDTO | null {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    return null;
+  }
+
+  const candidate = input as Record<string, unknown>;
+  if (candidate.type !== 'credential') {
+    return null;
+  }
+
+  if (typeof candidate.cancelled !== 'boolean') {
+    return null;
+  }
+
+  if (candidate.value !== undefined && typeof candidate.value !== 'string') {
+    return null;
+  }
+
+  if (candidate.username !== undefined && typeof candidate.username !== 'string') {
+    return null;
+  }
+
+  if (candidate.password !== undefined && typeof candidate.password !== 'string') {
+    return null;
+  }
+
+  let headers: Record<string, string> | undefined;
+  if (candidate.headers !== undefined) {
+    if (!candidate.headers || typeof candidate.headers !== 'object' || Array.isArray(candidate.headers)) {
+      return null;
+    }
+
+    headers = {};
+    for (const [headerKey, headerValue] of Object.entries(candidate.headers as Record<string, unknown>)) {
+      if (typeof headerValue !== 'string') {
+        return null;
+      }
+
+      headers[headerKey] = headerValue;
+    }
+  }
+
+  return {
+    type: 'credential',
+    value: candidate.value as string | undefined,
+    username: candidate.username as string | undefined,
+    password: candidate.password as string | undefined,
+    headers,
+    cancelled: candidate.cancelled,
   };
 }
 
@@ -1203,6 +1319,114 @@ export function createRuntimeGatewayServer(options: RuntimeGatewayServerOptions)
 
           json(sendResult.status ?? MESSAGE_SEND_ACCEPTED_STATUS, {
             status: 'accepted',
+          });
+        },
+      },
+      {
+        method: 'POST',
+        path: '/api/sessions/:sessionId/permissions/:requestId',
+        handler: async ({ req, params, parseJsonBody, error, json }) => {
+          const auth = requireAuth(req.headers.authorization, accessTokens);
+          if (!auth.authorized) {
+            error(auth.status, auth.code, auth.message);
+            return;
+          }
+
+          const sessionId = params.sessionId;
+          if (!sessionId) {
+            error(404, 'session_not_found', 'Session not found');
+            return;
+          }
+
+          const requestId = params.requestId;
+          if (!requestId) {
+            error(404, 'permission_request_not_found', 'Permission request not found');
+            return;
+          }
+
+          const session = await sessionManager.getSession(sessionId);
+          if (!session) {
+            error(404, 'session_not_found', 'Session not found');
+            return;
+          }
+
+          const payload = await parseJsonBody<unknown>();
+          const permissionResponse = parsePermissionResponsePayload(payload);
+          if (!permissionResponse) {
+            error(400, 'invalid_request', 'Invalid permission response payload');
+            return;
+          }
+
+          sessionWorkspaceCache.set(sessionId, session.workspaceId);
+
+          const didRespond = await sessionManager.respondToPermission(
+            sessionId,
+            requestId,
+            permissionResponse.allowed,
+            permissionResponse.alwaysAllow ?? false,
+            permissionResponse.options
+          );
+
+          if (!didRespond) {
+            error(404, 'permission_request_not_found', 'Permission request not found');
+            return;
+          }
+
+          json(200, {
+            status: 'ok',
+          });
+        },
+      },
+      {
+        method: 'POST',
+        path: '/api/sessions/:sessionId/credentials/:requestId',
+        handler: async ({ req, params, parseJsonBody, error, json }) => {
+          const auth = requireAuth(req.headers.authorization, accessTokens);
+          if (!auth.authorized) {
+            error(auth.status, auth.code, auth.message);
+            return;
+          }
+
+          const sessionId = params.sessionId;
+          if (!sessionId) {
+            error(404, 'session_not_found', 'Session not found');
+            return;
+          }
+
+          const requestId = params.requestId;
+          if (!requestId) {
+            error(404, 'credential_request_not_found', 'Credential request not found');
+            return;
+          }
+
+          const session = await sessionManager.getSession(sessionId);
+          if (!session) {
+            error(404, 'session_not_found', 'Session not found');
+            return;
+          }
+
+          const payload = await parseJsonBody<unknown>();
+          const credentialResponse = parseCredentialResponsePayload(payload);
+          if (!credentialResponse) {
+            error(400, 'invalid_request', 'Invalid credential response payload');
+            return;
+          }
+
+          sessionWorkspaceCache.set(sessionId, session.workspaceId);
+
+          const didRespond = await sessionManager.respondToCredential(
+            sessionId,
+            requestId,
+            credentialResponse
+          );
+
+          if (!didRespond) {
+            error(404, 'credential_request_not_found', 'Credential request not found');
+            return;
+          }
+
+          json(200, {
+            status: 'ok',
           });
         },
       },

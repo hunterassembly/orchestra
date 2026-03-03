@@ -1,9 +1,11 @@
 import type {
   AttachmentDTO,
+  CredentialResponseDTO,
   CreateSessionOptionsDTO,
   ErrorDTO,
   PairingConfirmResponse,
   PairingStartResponse,
+  PermissionResponseDTO,
   SendMessageOptionsDTO,
   SessionCommandDTO,
   SessionDTO,
@@ -26,6 +28,8 @@ type SessionDetailResponse = SessionDTO & {
 type StatusResponse = {
   status: string;
 };
+
+type AttachmentReferenceInput = string | { id: string };
 
 type RequestConfig = {
   method: "GET" | "POST" | "DELETE";
@@ -119,6 +123,7 @@ class ApiClient {
     sessionId: string,
     message: string,
     options?: SendMessageOptionsDTO,
+    attachments?: AttachmentReferenceInput[],
   ): Promise<StatusResponse> {
     return this.request<StatusResponse>({
       method: "POST",
@@ -127,6 +132,7 @@ class ApiClient {
       body: {
         message,
         ...(options ? { options } : {}),
+        ...(attachments && attachments.length > 0 ? { attachments } : {}),
       },
     });
   }
@@ -162,6 +168,32 @@ class ApiClient {
       path: `/api/sessions/${encodeURIComponent(sessionId)}/attachments`,
       auth: true,
       body: file,
+    });
+  }
+
+  async respondToPermission(
+    sessionId: string,
+    requestId: string,
+    response: PermissionResponseDTO,
+  ): Promise<StatusResponse> {
+    return this.request<StatusResponse>({
+      method: "POST",
+      path: `/api/sessions/${encodeURIComponent(sessionId)}/permissions/${encodeURIComponent(requestId)}`,
+      auth: true,
+      body: response,
+    });
+  }
+
+  async respondToCredential(
+    sessionId: string,
+    requestId: string,
+    response: CredentialResponseDTO,
+  ): Promise<StatusResponse> {
+    return this.request<StatusResponse>({
+      method: "POST",
+      path: `/api/sessions/${encodeURIComponent(sessionId)}/credentials/${encodeURIComponent(requestId)}`,
+      auth: true,
+      body: response,
     });
   }
 

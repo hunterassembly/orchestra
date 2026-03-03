@@ -1,6 +1,8 @@
 import { app } from 'electron'
 import type {
+  CredentialResponseDTO,
   CreateSessionOptionsDTO,
+  PermissionResponseOptionsDTO,
   PermissionModeDTO,
   SendMessageOptionsDTO,
   SessionStatusDTO,
@@ -168,6 +170,18 @@ function createSessionManagerAdapter(sessionManager: SessionManager): RuntimeSes
     },
     async setSessionPermissionMode(sessionId: string, mode: PermissionModeDTO) {
       sessionManager.setSessionPermissionMode(sessionId, mode)
+    },
+    async respondToPermission(
+      sessionId: string,
+      requestId: string,
+      allowed: boolean,
+      alwaysAllow: boolean,
+      options?: PermissionResponseOptionsDTO
+    ) {
+      return sessionManager.respondToPermission(sessionId, requestId, allowed, alwaysAllow, options)
+    },
+    async respondToCredential(sessionId: string, requestId: string, response: CredentialResponseDTO) {
+      return sessionManager.respondToCredential(sessionId, requestId, response)
     },
     async cancelProcessing(sessionId: string) {
       const session = await sessionManager.getSession(sessionId)

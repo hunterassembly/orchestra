@@ -6,6 +6,7 @@
  * Settings:
  * - Auto Capitalisation (on/off)
  * - Spell Check (on/off)
+ * - Push-to-talk Whisper (on/off)
  * - Send Message Key (Enter or ⌘+Enter)
  */
 
@@ -39,6 +40,7 @@ export default function InputSettingsPage() {
 
   // Spell check state (default off)
   const [spellCheck, setSpellCheck] = useState(false)
+  const [pushToTalkWhisper, setPushToTalkWhisper] = useState(false)
 
   // Send message key state
   const [sendMessageKey, setSendMessageKey] = useState<'enter' | 'cmd-enter'>('enter')
@@ -48,14 +50,16 @@ export default function InputSettingsPage() {
     const loadSettings = async () => {
       if (!window.electronAPI) return
       try {
-        const [autoCapEnabled, spellCheckEnabled, sendKey] = await Promise.all([
+        const [autoCapEnabled, spellCheckEnabled, sendKey, pushToTalkEnabled] = await Promise.all([
           window.electronAPI.getAutoCapitalisation(),
           window.electronAPI.getSpellCheck(),
           window.electronAPI.getSendMessageKey(),
+          window.electronAPI.getPushToTalkWhisper(),
         ])
         setAutoCapitalisation(autoCapEnabled)
         setSpellCheck(spellCheckEnabled)
         setSendMessageKey(sendKey)
+        setPushToTalkWhisper(pushToTalkEnabled)
       } catch (error) {
         console.error('Failed to load input settings:', error)
       }
@@ -71,6 +75,11 @@ export default function InputSettingsPage() {
   const handleSpellCheckChange = useCallback(async (enabled: boolean) => {
     setSpellCheck(enabled)
     await window.electronAPI.setSpellCheck(enabled)
+  }, [])
+
+  const handlePushToTalkWhisperChange = useCallback(async (enabled: boolean) => {
+    setPushToTalkWhisper(enabled)
+    await window.electronAPI.setPushToTalkWhisper(enabled)
   }, [])
 
   const handleSendMessageKeyChange = useCallback((value: string) => {
@@ -100,6 +109,12 @@ export default function InputSettingsPage() {
                     description="Underline misspelled words while typing."
                     checked={spellCheck}
                     onCheckedChange={handleSpellCheckChange}
+                  />
+                  <SettingsToggle
+                    label="Hold Space to dictate"
+                    description="Hold Space in the input to record, then transcribe with your local Whisper setup."
+                    checked={pushToTalkWhisper}
+                    onCheckedChange={handlePushToTalkWhisperChange}
                   />
                 </SettingsCard>
               </SettingsSection>

@@ -29,6 +29,98 @@ const BIN_EXT = IS_WINDOWS ? ".exe" : "";
 const VITE_BIN = join(ROOT_DIR, `node_modules/.bin/vite${BIN_EXT}`);
 const ELECTRON_BIN = join(ROOT_DIR, `node_modules/.bin/electron${BIN_EXT}`);
 
+interface CliOptions {
+  profile?: string;
+  cleanProfile: boolean;
+  isolateHome: boolean;
+}
+
+function parseCliOptions(argv: string[]): CliOptions {
+  const options: CliOptions = {
+    cleanProfile: false,
+    isolateHome: true,
+  };
+
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+    if (arg === "--profile") {
+      options.profile = argv[i + 1];
+      i++;
+    } else if (arg.startsWith("--profile=")) {
+      options.profile = arg.split("=")[1];
+    } else if (arg === "--clean-profile") {
+      options.cleanProfile = true;
+    } else if (arg === "--no-isolate-home") {
+      options.isolateHome = false;
+    } else if (arg === "--help" || arg === "-h") {
+      console.log(
+        [
+          "Usage: bun run scripts/electron-dev.ts [options]",
+          "",
+          "Options:",
+          "  --profile <name>      Run with isolated dev profile",
+          "  --clean-profile       Reset profile home before launch",
+          "  --no-isolate-home     Keep current HOME (config dir still isolated)",
+        ].join("\n")
+      );
+      process.exit(0);
+    }
+  }
+
+  return options;
+}
+
+function sanitizeProfileName(input: string): string {
+  return input.trim().toLowerCase().replace(/[^a-z0-9-_]/g, "-").replace(/-+/g, "-");
+}
+
+function hashString(input: string): number {
+  let hash = 0;
+  for (let i = 0; i < input.length; i++) {
+    hash = (hash * 31 + input.charCodeAt(i)) % 997;
+  }
+  return hash;
+}
+
+function applyProfileConfig(options: CliOptions): void {
+  if (!options.profile) return;
+
+  const profile = sanitizeProfileName(options.profile);
+  if (!profile) {
+    throw new Error("Profile name cannot be empty");
+  }
+
+  const hostHome = process.env.HOME || "";
+  const profileHome = join(hostHome, `.orchestra-dev-${profile}-home`);
+
+  if (options.cleanProfile && existsSync(profileHome)) {
+    rmSync(profileHome, { recursive: true, force: true });
+  }
+
+  mkdirSync(profileHome, { recursive: true });
+
+  if (options.isolateHome) {
+    process.env.HOME = profileHome;
+  }
+
+  const configDir = join(profileHome, ".craft-agent");
+  const offset = hashString(profile) % 100;
+  const vitePort = String(5200 + offset);
+  const gatewayPort = String(7900 + offset);
+  const schemeSafe = profile.replace(/[^a-z0-9]/g, "") || "dev";
+
+  process.env.CRAFT_PROFILE = profile;
+  process.env.CRAFT_CONFIG_DIR = configDir;
+  process.env.CRAFT_VITE_PORT = vitePort;
+  process.env.CRAFT_MOBILE_GATEWAY_PORT = gatewayPort;
+  process.env.CRAFT_APP_NAME = `Orchestra [${profile}]`;
+  process.env.CRAFT_DEEPLINK_SCHEME = `orchestra${schemeSafe}`;
+
+  console.log(
+    `🧪 Profile '${profile}' enabled: HOME=${process.env.HOME}, config=${configDir}, vite=${vitePort}, gateway=${gatewayPort}`
+  );
+}
+
 function resolveBuildPlatform(): Platform {
   if (process.platform === "darwin") return "darwin";
   if (process.platform === "win32") return "win32";
@@ -362,10 +454,14 @@ async function waitForFileStable(filePath: string, timeoutMs = 10000): Promise<b
 
 async function main(): Promise<void> {
   console.log("🚀 Starting Electron dev environment...\n");
+  const cliOptions = parseCliOptions(process.argv.slice(2));
 
   // Setup
-  detectInstance();
   loadEnvFile();
+  applyProfileConfig(cliOptions);
+  if (!cliOptions.profile) {
+    detectInstance();
+  }
   cleanViteCache();
 
   // Ensure dist directory exists
