@@ -65,6 +65,7 @@ Sentry.setUser({ id: machineId })
 
 import { join, delimiter } from 'path'
 import { existsSync } from 'fs'
+import { inspect } from 'util'
 import { SessionManager } from './sessions'
 import { registerIpcHandlers } from './ipc'
 import { initModelRefreshService, getModelRefreshService } from './model-fetchers'
@@ -271,41 +272,62 @@ async function createInitialWindows(): Promise<void> {
   mainLog.info(`Created window for first workspace: ${workspaces[0].name}`)
 }
 
+async function runStartupStep(name: string, step: () => void | Promise<void>): Promise<void> {
+  try {
+    await step()
+  } catch (error) {
+    if (error instanceof Error) {
+      mainLog.error(`[startup] ${name} failed: ${error.message}`, error.stack)
+    } else {
+      mainLog.error(`[startup] ${name} failed:`, error)
+    }
+  }
+}
+
 app.whenReady().then(async () => {
-  // Register bundled assets root so all seeding functions can find their files
-  // (docs, permissions, themes, tool-icons resolve via getBundledAssetsDir)
-  setBundledAssetsRoot(__dirname)
-
-  // Initialize backend runtime bootstrapping (Codex vendor root, Claude SDK runtime paths).
-  initializeBackendHostRuntime({
-    hostRuntime: {
-      appRootPath: app.isPackaged ? app.getAppPath() : process.cwd(),
-      resourcesPath: process.resourcesPath,
-      isPackaged: app.isPackaged,
-    },
+  // Non-critical startup steps are isolated so an individual failure doesn't block window creation.
+  await runStartupStep('set bundled assets root', () => {
+    // Register bundled assets root so all seeding functions can find their files
+    // (docs, permissions, themes, tool-icons resolve via getBundledAssetsDir)
+    setBundledAssetsRoot(__dirname)
   })
-
-  // Register PowerShell validator root so it can find the bundled parser script
-  // (Windows only: validates PowerShell commands in Explore mode using AST analysis)
-  setPowerShellValidatorRoot(join(__dirname, 'resources'))
-
-  // Initialize bundled docs
-  initializeDocs()
-
-  // Initialize bundled release notes
-  initializeReleaseNotes()
-
-  // Ensure default permissions file exists (copies bundled default.json on first run)
-  ensureDefaultPermissions()
-
-  // Seed tool icons to ~/.craft-agent/tool-icons/ (copies bundled SVGs on first run)
-  ensureToolIcons()
-
-  // Seed preset themes to ~/.craft-agent/themes/ (copies bundled theme JSONs on first run)
-  ensurePresetThemes()
-
-  // Register thumbnail:// protocol handler (scheme was registered earlier, before app.whenReady)
-  registerThumbnailHandler()
+  await runStartupStep('initialize backend runtime', () => {
+    // Initialize backend runtime bootstrapping (Codex vendor root, Claude SDK runtime paths).
+    initializeBackendHostRuntime({
+      hostRuntime: {
+        appRootPath: app.isPackaged ? app.getAppPath() : process.cwd(),
+        resourcesPath: process.resourcesPath,
+        isPackaged: app.isPackaged,
+      },
+    })
+  })
+  await runStartupStep('set powershell validator root', () => {
+    // Register PowerShell validator root so it can find the bundled parser script
+    // (Windows only: validates PowerShell commands in Explore mode using AST analysis)
+    setPowerShellValidatorRoot(join(__dirname, 'resources'))
+  })
+  await runStartupStep('initialize docs', () => {
+    initializeDocs()
+  })
+  await runStartupStep('initialize release notes', () => {
+    initializeReleaseNotes()
+  })
+  await runStartupStep('ensure default permissions', () => {
+    // Ensure default permissions file exists (copies bundled default.json on first run)
+    ensureDefaultPermissions()
+  })
+  await runStartupStep('ensure tool icons', () => {
+    // Seed tool icons to ~/.craft-agent/tool-icons/ (copies bundled SVGs on first run)
+    ensureToolIcons()
+  })
+  await runStartupStep('ensure preset themes', () => {
+    // Seed preset themes to ~/.craft-agent/themes/ (copies bundled theme JSONs on first run)
+    ensurePresetThemes()
+  })
+  await runStartupStep('register thumbnail handler', () => {
+    // Register thumbnail:// protocol handler (scheme was registered earlier, before app.whenReady)
+    registerThumbnailHandler()
+  })
 
   // Note: electron-updater handles pending updates internally via autoInstallOnAppQuit
 
@@ -496,6 +518,9 @@ app.whenReady().then(async () => {
       }
     }
   })
+}).catch((error) => {
+  // Prevent silent startup failures in packaged builds when no window has been created yet.
+  mainLog.error('Fatal startup failure in app.whenReady():', error)
 })
 
 app.on('window-all-closed', () => {
@@ -595,6 +620,11 @@ process.on('uncaughtException', (error) => {
 })
 
 process.on('unhandledRejection', (reason, promise) => {
-  mainLog.error('Unhandled rejection at:', promise, 'reason:', reason)
-  Sentry.captureException(reason instanceof Error ? reason : new Error(String(reason)))
+  const serializedPromise = inspect(promise, { depth: 2, breakLength: 120 })
+  const serializedReason = reason instanceof Error
+    ? `${reason.name}: ${reason.message}\n${reason.stack ?? ''}`
+    : inspect(reason, { depth: 5, breakLength: 120 })
+
+  mainLog.error('Unhandled rejection at:', serializedPromise, 'reason:', serializedReason)
+  Sentry.captureException(reason instanceof Error ? reason : new Error(serializedReason))
 })
