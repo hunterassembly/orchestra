@@ -14,6 +14,8 @@ export const KEYS = {
   sidebarVisible: 'sidebar-visible',
   sidebarWidth: 'sidebar-width',
   sessionListWidth: 'session-list-width',
+  rightSidebarVisible: 'right-sidebar-visible',
+  rightSidebarWidth: 'right-sidebar-width',
   sidebarMode: 'sidebar-mode',
   listFilter: 'list-filter',
   labelFilter: 'label-filter',
@@ -30,6 +32,7 @@ export const KEYS = {
   sessionFilesExpandedFolders: 'session-files-expanded', // Expanded folders in session files tree (keyed by sessionId)
   workspaceFilesExpandedFolders: 'workspace-files-expanded', // Expanded folders in workspace file tree
   workspaceFilesActiveTab: 'workspace-files-active-tab', // Active tab in workspace files panel ('files' | 'changes')
+  sessionInfoMetadataHeight: 'session-info-metadata-height', // Height of top section in SessionMetadataPanel
 
   // Theme
   theme: 'theme',

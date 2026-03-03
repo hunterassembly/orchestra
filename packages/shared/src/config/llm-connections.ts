@@ -45,7 +45,6 @@ export function registerPiModelResolver(resolver: PiModelResolver): void {
  * - 'anthropic_compat': Anthropic-format compatible endpoints (OpenRouter, etc.)
  * - 'bedrock': AWS Bedrock (Claude models via AWS)
  * - 'vertex': Google Vertex AI (Claude models via GCP)
- * - 'codex': OpenAI Codex runtime (ChatGPT Plus/Pro OAuth)
  * - 'pi': Pi unified LLM API (20+ providers via @mariozechner/pi-ai)
  * - 'pi_compat': Pi with custom endpoint (Ollama, self-hosted models)
  */
@@ -54,7 +53,6 @@ export type LlmProviderType =
   | 'anthropic_compat'
   | 'bedrock'
   | 'vertex'
-  | 'codex'
   | 'pi'
   | 'pi_compat';
 
@@ -206,17 +204,13 @@ export function getSummarizationModel(connection: Pick<LlmConnection, 'models' |
  * Shared implementation for getMiniModel() and getSummarizationModel().
  *
  *   - Anthropic (incl. bedrock/vertex/compat): find "haiku"
- *   - Pi/Codex: find "mini" or "flash"
+ *   - Pi: find "mini" or "flash"
  *   - Otherwise: last model in the list
  */
 function findSmallModel(connection: Pick<LlmConnection, 'models' | 'providerType'>): string | undefined {
   if (!connection.models || connection.models.length === 0) return undefined;
 
   const toId = (m: ModelDefinition | string) => typeof m === 'string' ? m : m.id;
-
-  // DEBUG LOG
-  // eslint-disable-next-line no-console
-  console.log(`[findSmallModel] Searching for small model. Provider: ${connection.providerType}`, connection.models.map(toId));
 
   const toSearchStr = (m: ModelDefinition | string) =>
     typeof m === 'string' ? m.toLowerCase() : `${m.id} ${m.name} ${m.shortName}`.toLowerCase();
@@ -226,8 +220,11 @@ function findSmallModel(connection: Pick<LlmConnection, 'models' | 'providerType
 
   if (isAnthropicProvider(connection.providerType)) {
     keywords.push('haiku');
-  } else if (isPiProvider(connection.providerType) || isCodexProvider(connection.providerType)) {
+  } else if (isPiProvider(connection.providerType)) {
     keywords.push('mini', 'flash');
+  } else {
+    // Aggregator providers (copilot, etc.) — try all common small-model keywords
+    keywords.push('mini', 'haiku', 'flash');
   }
 
   if (keywords.length > 0) {
@@ -236,18 +233,12 @@ function findSmallModel(connection: Pick<LlmConnection, 'models' | 'providerType
       return keywords.some(k => searchStr.includes(k));
     });
     if (match) {
-      const id = toId(match);
-      // eslint-disable-next-line no-console
-      console.log(`[findSmallModel] Found match: ${id} using keywords: ${keywords.join(', ')}`);
-      return id;
+      return toId(match);
     }
   }
 
   // Fallback: last model in the list
-  const fallback = toId(connection.models[connection.models.length - 1]!);
-  // eslint-disable-next-line no-console
-  console.log(`[findSmallModel] No keyword match found. Fallback to last model: ${fallback}`);
-  return fallback;
+  return toId(connection.models[connection.models.length - 1]!);
 }
 
 /**
@@ -375,15 +366,6 @@ export function isPiProvider(providerType: LlmProviderType): boolean {
 }
 
 /**
- * Check if a provider type uses the Codex runtime.
- * @param providerType - Provider type to check
- * @returns true if this provider uses Codex runtime
- */
-export function isCodexProvider(providerType: LlmProviderType): boolean {
-  return providerType === 'codex';
-}
-
-/**
  * Get the default model list for a provider type from the registry.
  * For *_compat providers, returns empty array - those should use connection.models instead.
  *
@@ -400,11 +382,6 @@ export function getModelsForProviderType(providerType: LlmProviderType, piAuthPr
   // Pi: fetch models via registered resolver (avoids Pi SDK import in renderer)
   if (providerType === 'pi') {
     return _piModelResolver(piAuthProvider);
-  }
-
-  // Codex: fixed OpenAI Codex provider via Pi model resolver
-  if (providerType === 'codex') {
-    return _piModelResolver('openai-codex');
   }
 
   // Anthropic, Bedrock, Vertex all use Claude models
@@ -431,28 +408,14 @@ export function getModelsForProviderType(providerType: LlmProviderType, piAuthPr
  * Format: bare model IDs (without pi/ prefix). Matched against pi/{id} or pi/{id}-*.
  */
 export const PI_PREFERRED_DEFAULTS: Record<string, string[]> = {
-  anthropic: ['claude-sonnet-4-5', 'claude-sonnet-4-6', 'claude-sonnet-4-0', 'claude-haiku-4-5'],
+  anthropic: ['claude-opus-4-6', 'claude-sonnet-4-6', 'claude-haiku-4-5'],
   openai: ['gpt-5.2', 'gpt-5.1', 'gpt-5', 'o4-mini', 'o3', 'gpt-4o'],
-  'openai-codex': ['gpt-5.3-codex', 'gpt-5.2-codex', 'gpt-5.1-codex-mini'],
+  'openai-codex': ['gpt-5.2', 'gpt-5.1', 'gpt-5', 'o4-mini', 'o3', 'gpt-4o'],
   google: ['gemini-2.5-pro', 'gemini-2.5-flash', 'gemini-2.5-flash-lite'],
+  'github-copilot': ['claude-sonnet-4-6', 'gpt-5', 'o4-mini', 'claude-haiku-4-5'],
 };
 
 export function getDefaultModelsForConnection(providerType: LlmProviderType, piAuthProvider?: string): Array<ModelDefinition | string> {
-  if (providerType === 'codex') {
-    const models = _piModelResolver('openai-codex');
-    const preferred = PI_PREFERRED_DEFAULTS['openai-codex'] || [];
-    if (preferred.length > 0) {
-      models.sort((a, b) => {
-        const aIdx = preferred.findIndex(p => a.id === `pi/${p}` || a.id.startsWith(`pi/${p}-`));
-        const bIdx = preferred.findIndex(p => b.id === `pi/${p}` || b.id.startsWith(`pi/${p}-`));
-        const aPrio = aIdx >= 0 ? aIdx : preferred.length;
-        const bPrio = bIdx >= 0 ? bIdx : preferred.length;
-        return aPrio - bPrio;
-      });
-    }
-    return models;
-  }
-
   if (providerType === 'pi') {
     const models = _piModelResolver(piAuthProvider);
     // Sort preferred defaults first so getDefaultModelForConnection picks a modern model
@@ -469,11 +432,7 @@ export function getDefaultModelsForConnection(providerType: LlmProviderType, piA
     return models;
   }
   if (providerType === 'pi_compat') return [];  // Dynamic — user specifies
-  if (providerType === 'anthropic_compat') return [
-    'anthropic/claude-opus-4.6',
-    'anthropic/claude-sonnet-4.5',
-    'anthropic/claude-haiku-4.5',
-  ];
+  if (providerType === 'anthropic_compat') return [];  // Dynamic — user specifies
   // anthropic, bedrock, vertex
   return ANTHROPIC_MODELS;
 }
@@ -489,7 +448,7 @@ export function getDefaultModelsForConnection(providerType: LlmProviderType, piA
 export function getDefaultModelForConnection(providerType: LlmProviderType, piAuthProvider?: string): string {
   const models = getDefaultModelsForConnection(providerType, piAuthProvider);
   const first = models[0];
-  if (!first) return ANTHROPIC_MODELS[0]!.id;
+  if (!first) return '';  // Dynamic provider — no default
   return typeof first === 'string' ? first : first.id;
 }
 
@@ -562,7 +521,6 @@ export function isValidProviderAuthCombination(
     anthropic_compat: ['api_key_with_endpoint'],
     bedrock: ['bearer_token', 'iam_credentials', 'environment'],
     vertex: ['oauth', 'service_account_file', 'environment'],
-    codex: ['oauth'],
     pi: ['api_key', 'oauth', 'none'],
     pi_compat: ['api_key_with_endpoint', 'none'],
   };
@@ -586,7 +544,7 @@ export function migrateConnectionType(legacyType: LlmConnectionType): LlmProvide
     case 'anthropic':
       return 'anthropic';
     case 'openai':
-      return 'codex';
+      return 'pi';
     case 'openai-compat':
       return 'pi_compat';
   }

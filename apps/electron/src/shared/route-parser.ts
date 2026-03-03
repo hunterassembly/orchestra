@@ -738,6 +738,26 @@ export function buildRouteFromNavigationState(state: NavigationState): string {
   return buildCompoundRoute(navigationStateToCompoundRoute(state))
 }
 
+/**
+ * Build URL search string from NavigationState.
+ *
+ * Returns a query string (including leading '?') with:
+ * - route: serialized compound route
+ * - sidebar: optional right sidebar state
+ */
+export function buildUrlWithState(state: NavigationState): string {
+  const params = new URLSearchParams()
+  params.set('route', buildRouteFromNavigationState(state))
+
+  const sidebar = buildRightSidebarParam(state.rightSidebar)
+  if (sidebar) {
+    params.set('sidebar', sidebar)
+  }
+
+  const query = params.toString()
+  return query ? `?${query}` : ''
+}
+
 // =============================================================================
 // Right Sidebar Param Parsing
 // =============================================================================

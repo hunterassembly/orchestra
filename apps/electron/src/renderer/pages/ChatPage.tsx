@@ -567,6 +567,7 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
               activeTabId={chatTabs.activeTabId}
               onActivate={chatTabs.activateTab}
               onClose={chatTabs.closeTab}
+              activeSessionId={sessionId}
             />
             <div className="flex-1 flex flex-col min-h-0">
               <ChatDisplay
@@ -650,6 +651,7 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
           activeTabId={chatTabs.activeTabId}
           onActivate={chatTabs.activateTab}
           onClose={chatTabs.closeTab}
+          activeSessionId={sessionId}
         />
         {/* Content area */}
         <div className="flex-1 flex flex-col min-h-0">

@@ -605,6 +605,7 @@ export const IPC_CHANNELS = {
   MARK_ALL_SESSIONS_READ: 'sessions:markAllRead',
   SESSIONS_UNREAD_SUMMARY_CHANGED: 'sessions:unreadSummaryChanged',  // Broadcast: UnreadSummary
   CREATE_SESSION: 'sessions:create',
+  CREATE_SUB_SESSION: 'sessions:createSubSession',
   DELETE_SESSION: 'sessions:delete',
   GET_SESSION_MESSAGES: 'sessions:getMessages',
   SEND_MESSAGE: 'sessions:sendMessage',
@@ -876,6 +877,8 @@ export const IPC_CHANNELS = {
   APPEARANCE_SET_RICH_TOOL_DESCRIPTIONS: 'appearance:setRichToolDescriptions',
 
   BADGE_REFRESH: 'badge:refresh',
+  BADGE_UPDATE: 'badge:update',
+  BADGE_CLEAR: 'badge:clear',
   BADGE_SET_ICON: 'badge:setIcon',
   BADGE_DRAW: 'badge:draw',  // Broadcast: { count: number, iconDataUrl: string }
   BADGE_DRAW_WINDOWS: 'badge:draw-windows',  // Broadcast: { count: number }
