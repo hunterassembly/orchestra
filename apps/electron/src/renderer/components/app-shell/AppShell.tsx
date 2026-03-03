@@ -1,6 +1,6 @@
 import * as React from "react"
 import { useRef, useState, useEffect, useCallback, useMemo } from "react"
-import { useAtomValue } from "jotai"
+import { useAtomValue, useStore } from "jotai"
 import { motion, AnimatePresence } from "motion/react"
 import {
   Archive,
@@ -74,6 +74,8 @@ import {
 import { WorkspaceSwitcher } from "./WorkspaceSwitcher"
 import { SessionList } from "./SessionList"
 import { MainContentPanel } from "./MainContentPanel"
+import { PanelSlot } from "./PanelSlot"
+import { PanelResizeSash } from "./PanelResizeSash"
 import type { ChatDisplayHandle } from "./ChatDisplay"
 import { LeftSidebar } from "./LeftSidebar"
 import { useSession } from "@/hooks/useSession"
@@ -91,6 +93,7 @@ import type { Session, Workspace, FileAttachment, PermissionRequest, LoadedSourc
 import { sessionMetaMapAtom, type SessionMeta } from "@/atoms/sessions"
 import { sourcesAtom } from "@/atoms/sources"
 import { skillsAtom } from "@/atoms/skills"
+import { panelStackAtom, focusedPanelIdAtom, focusedSessionIdAtom, parseSessionIdFromRoute } from "@/atoms/panel-stack"
 import { type SessionStatusId, type SessionStatus, statusConfigsToSessionStatuses } from "@/config/session-status-config"
 import { useStatuses } from "@/hooks/useStatuses"
 import { useLabels } from "@/hooks/useLabels"
@@ -126,6 +129,7 @@ import { EditPopover, getEditConfig, type EditContextKey } from "@/components/ui
 import { getDocUrl } from "@craft-agent/shared/docs/doc-links"
 import SettingsNavigator from "@/pages/settings/SettingsNavigator"
 import { RightSidebar } from "./RightSidebar"
+import { PANEL_GAP } from "./panel-constants"
 import type { RichTextInputHandle } from "@/components/ui/rich-text-input"
 import { hasOpenOverlay } from "@/lib/overlay-detection"
 import { clearSourceIconCaches } from "@/lib/icon-cache"
@@ -438,6 +442,13 @@ function FilterLabelItems({
 
 const PANEL_WINDOW_EDGE_SPACING = 6 // Padding between panels and window edge
 const PANEL_PANEL_SPACING = 5 // Gap between adjacent panels
+const RIGHT_SIDEBAR_MIN_WIDTH = 280
+const RIGHT_SIDEBAR_MAX_WIDTH = 480
+
+function clampRightSidebarWidth(width: unknown): number {
+  if (typeof width !== "number" || !Number.isFinite(width)) return 300
+  return Math.min(Math.max(width, RIGHT_SIDEBAR_MIN_WIDTH), RIGHT_SIDEBAR_MAX_WIDTH)
+}
 
 /**
  * AppShell - Main 3-panel layout container
@@ -515,7 +526,7 @@ function AppShellContent({
     return storage.get(storage.KEYS.rightSidebarVisible, false)
   })
   const [rightSidebarWidth, setRightSidebarWidth] = React.useState(() => {
-    return storage.get(storage.KEYS.rightSidebarWidth, 300)
+    return clampRightSidebarWidth(storage.get(storage.KEYS.rightSidebarWidth, 300))
   })
   const [skipRightSidebarAnimation, setSkipRightSidebarAnimation] = React.useState(false)
 
@@ -569,6 +580,24 @@ function AppShellContent({
   // UNIFIED NAVIGATION STATE - single source of truth from NavigationContext
   // All sidebar/navigator/main panel state is derived from this
   const navState = useNavigationState()
+  const store = useStore()
+  const panelStack = useAtomValue(panelStackAtom)
+  const panelCount = panelStack.length
+  const focusedPanelId = useAtomValue(focusedPanelIdAtom)
+  const focusedSessionId = useAtomValue(focusedSessionIdAtom)
+  const setFocusedPanel = useSetAtom(focusedPanelIdAtom)
+
+  // Navigate to a session in the focused panel unless that session is already open in another panel.
+  const navigateToSessionInPanel = useCallback((sessionId: string) => {
+    const stack = store.get(panelStackAtom)
+    for (const entry of stack) {
+      if (parseSessionIdFromRoute(entry.route) === sessionId) {
+        setFocusedPanel(entry.id)
+        return
+      }
+    }
+    navigateToSession(sessionId)
+  }, [store, setFocusedPanel, navigateToSession])
 
   // Derive chat filter from navigation state (only when in chats navigator)
   const sessionFilter = isSessionsNavigation(navState) ? navState.filter : null
@@ -720,6 +749,14 @@ function AppShellContent({
       setTimeout(() => setSkipRightSidebarAnimation(false), 0)
     }
   }, [navState])
+
+  // Self-heal invalid persisted width values so open can't get stuck "invisible".
+  React.useEffect(() => {
+    const clamped = clampRightSidebarWidth(rightSidebarWidth)
+    if (clamped !== rightSidebarWidth) {
+      setRightSidebarWidth(clamped)
+    }
+  }, [rightSidebarWidth])
 
   // Cmd+F to activate search
   useAction('app.search', () => setSearchActive(true))
@@ -1177,7 +1214,10 @@ function AppShellContent({
         }
       } else if (isResizing === 'right-sidebar') {
         // Calculate from right edge
-        const newWidth = Math.min(Math.max(window.innerWidth - e.clientX, 280), 480)
+        const newWidth = Math.min(
+          Math.max(window.innerWidth - e.clientX, RIGHT_SIDEBAR_MIN_WIDTH),
+          RIGHT_SIDEBAR_MAX_WIDTH,
+        )
         setRightSidebarWidth(newWidth)
         if (rightSidebarHandleRef.current) {
           const rect = rightSidebarHandleRef.current.getBoundingClientRect()
@@ -1469,7 +1509,10 @@ function AppShellContent({
       >
         <HeaderIconButton
           icon={<PanelRightRounded className="h-5 w-6" />}
-          onClick={() => setIsRightSidebarVisible(true)}
+          onClick={() => {
+            setRightSidebarWidth((prev) => clampRightSidebarWidth(prev))
+            setIsRightSidebarVisible(true)
+          }}
           tooltip="Open sidebar"
           className="text-foreground"
         />
@@ -1800,6 +1843,34 @@ function AppShellContent({
     // Focus the chat input after navigation completes
     setTimeout(() => focusZone('chat', { intent: 'programmatic' }), 50)
   }, [activeWorkspace, onCreateSession, focusZone])
+
+  // Ensure the browser strip is populated by default on app launch.
+  const hasEnsuredDefaultBrowserRef = useRef(false)
+  useEffect(() => {
+    if (hasEnsuredDefaultBrowserRef.current) return
+    hasEnsuredDefaultBrowserRef.current = true
+
+    let cancelled = false
+    const ensureDefaultBrowser = async () => {
+      try {
+        const browserPaneApi = window.electronAPI?.browserPane
+        if (!browserPaneApi) return
+
+        const instances = await browserPaneApi.list()
+        if (cancelled || instances.length > 0) return
+
+        // Create hidden default browser so users always see a browser badge/tab immediately.
+        await browserPaneApi.create({ show: false })
+      } catch (error) {
+        console.warn('[AppShell] Failed to ensure default browser window:', error)
+      }
+    }
+
+    void ensureDefaultBrowser()
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   // Delete Source - simplified since agents system is removed
   const handleDeleteSource = useCallback(async (sourceSlug: string) => {
@@ -3187,7 +3258,11 @@ function AppShellContent({
                   onRename={onRenameSession}
                   onFocusChatInput={focusChatInput}
                   onSessionSelect={(selectedMeta) => {
-                    navigateToSession(selectedMeta.id)
+                    if (panelCount > 1) {
+                      navigateToSessionInPanel(selectedMeta.id)
+                    } else {
+                      navigateToSession(selectedMeta.id)
+                    }
                   }}
                   onOpenInNewWindow={(selectedMeta) => {
                     if (activeWorkspaceId) {
@@ -3216,6 +3291,8 @@ function AppShellContent({
                   workspaceId={activeWorkspaceId ?? undefined}
                   statusFilter={listFilter}
                   labelFilterMap={labelFilter}
+                  focusedSessionId={panelCount === 0 ? null : panelCount > 1 ? focusedSessionId : undefined}
+                  onNavigateToSession={panelCount > 1 ? navigateToSessionInPanel : undefined}
                 />
               </>
             )}
@@ -3252,7 +3329,44 @@ function AppShellContent({
             effectiveFocusMode ? "rounded-l-[14px]" : "rounded-l-[10px]",
             isRightSidebarVisible ? "rounded-r-[10px]" : "rounded-r-[14px]"
           )}>
-            <MainContentPanel isFocusedMode={effectiveFocusMode} />
+            {panelCount > 1 ? (
+              <div
+                className="h-full flex-1 min-w-0 flex relative z-panel panel-scroll"
+                style={{
+                  overflowX: 'auto',
+                  overflowY: 'hidden',
+                  paddingBlock: 8,
+                  marginBlock: -8,
+                  marginBottom: -6,
+                  paddingBottom: 6,
+                  paddingRight: 8,
+                  marginRight: -8,
+                }}
+              >
+                <div className="flex h-full min-w-0 flex-grow" style={{ gap: PANEL_GAP }}>
+                  {panelStack.map((entry, index) => (
+                    <PanelSlot
+                      key={entry.id}
+                      entry={entry}
+                      isOnly={false}
+                      isFocusedPanel={entry.id === focusedPanelId}
+                      isSidebarAndNavigatorHidden={effectiveFocusMode}
+                      isAtLeftEdge={effectiveFocusMode && index === 0}
+                      isAtRightEdge={index === panelStack.length - 1 && !isRightSidebarVisible}
+                      proportion={entry.proportion}
+                      sash={index > 0 ? (
+                        <PanelResizeSash
+                          leftIndex={index - 1}
+                          rightIndex={index}
+                        />
+                      ) : undefined}
+                    />
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <MainContentPanel isFocusedMode={effectiveFocusMode} />
+            )}
           </div>
 
           {/* Right Sidebar - Inline Mode (≥ 920px) */}

@@ -41,8 +41,8 @@ import {
   buildUrlWithState,
   type ParsedRoute,
 } from '../../shared/route-parser'
-import { routes, type Route } from '../../shared/routes'
-import { NAVIGATE_EVENT } from '../lib/navigate'
+import { routes, type Route, type ViewRoute } from '../../shared/routes'
+import { NAVIGATE_EVENT, type NavigateOptions } from '../lib/navigate'
 import * as storage from '@/lib/local-storage'
 import type {
   DeepLinkNavigation,
@@ -65,6 +65,7 @@ import { isValidSettingsSubpage, type SettingsSubpage } from '../../shared/setti
 import { sessionMetaMapAtom, updateSessionMetaAtom, type SessionMeta } from '@/atoms/sessions'
 import { sourcesAtom } from '@/atoms/sources'
 import { skillsAtom } from '@/atoms/skills'
+import { focusedPanelRouteAtom, pushPanelAtom, updateFocusedPanelRouteAtom } from '@/atoms/panel-stack'
 
 // Re-export routes for convenience
 export { routes }
@@ -76,7 +77,7 @@ export { isSessionsNavigation, isSourcesNavigation, isSettingsNavigation, isSkil
 
 interface NavigationContextValue {
   /** Navigate to a route */
-  navigate: (route: Route) => void | Promise<void>
+  navigate: (route: Route, options?: NavigateOptions) => void | Promise<void>
   /** Check if navigation is ready */
   isReady: boolean
   /** Unified navigation state - single source of truth for all 3 panels */
@@ -121,6 +122,9 @@ export function NavigationProvider({
   isReady = true,
 }: NavigationProviderProps) {
   const [, setSession] = useSession()
+  const pushPanel = useSetAtom(pushPanelAtom)
+  const updateFocusedPanelRoute = useSetAtom(updateFocusedPanelRouteAtom)
+  const focusedPanelRoute = useAtomValue(focusedPanelRouteAtom)
 
   // Read session metadata directly from atom (reactive to session changes)
   const sessionMetaMap = useAtomValue(sessionMetaMapAtom)
@@ -151,7 +155,7 @@ export function NavigationProvider({
   const isNavigatingHistoryRef = useRef(false)
 
   // Ref to hold the latest navigate function (avoids stale closure in goBack/goForward)
-  const navigateRef = useRef<((route: Route) => void | Promise<void>) | null>(null)
+  const navigateRef = useRef<((route: Route, options?: NavigateOptions) => void | Promise<void>) | null>(null)
 
   // Queue navigation if not ready yet
   const pendingNavigationRef = useRef<ParsedRoute | null>(null)
@@ -509,9 +513,17 @@ export function NavigationProvider({
     [getFirstSessionId, getLastSelectedSessionId, getFirstSourceSlug, getFirstSkillSlug, setSession, store, workspaceId]
   )
 
+  // Keep navigation state synchronized with focused panel route when panel focus changes.
+  useEffect(() => {
+    if (!focusedPanelRoute) return
+    const nextState = parseRouteToNavigationState(focusedPanelRoute)
+    if (!nextState) return
+    applyNavigationState(nextState)
+  }, [focusedPanelRoute, applyNavigationState])
+
   // Main navigate function - unified approach using NavigationState
   const navigate = useCallback(
-    async (route: Route) => {
+    async (route: Route, options?: NavigateOptions) => {
       const parsed = parseRoute(route)
       if (!parsed) {
         console.warn('[Navigation] Invalid route:', route)
@@ -559,6 +571,17 @@ export function NavigationProvider({
         finalRoute = buildRouteFromNavigationState(finalState) as Route
       }
 
+      // Keep panel stack in sync with navigation intent.
+      if (options?.newPanel) {
+        pushPanel({
+          route: finalRoute as ViewRoute,
+          targetLaneId: options.targetLaneId,
+          intent: 'explicit',
+        })
+      } else {
+        updateFocusedPanelRoute(finalRoute as ViewRoute)
+      }
+
       // Persist route and sidebar in URL for reload restoration
       const url = new URL(window.location.href)
       if (navigationState.rightSidebar) {
@@ -591,7 +614,7 @@ export function NavigationProvider({
       setCanGoBack(newCanGoBack)
       setCanGoForward(newCanGoForward)
     },
-    [isReady, handleActionNavigation, applyNavigationState]
+    [isReady, handleActionNavigation, applyNavigationState, pushPanel, updateFocusedPanelRoute]
   )
 
   // Keep navigateRef in sync with latest navigate function
@@ -773,8 +796,14 @@ export function NavigationProvider({
       const initialRoute = (params.get('route') || 'allSessions') as Route
       historyStackRef.current = [initialRoute]
       historyIndexRef.current = 0
+
+      // Seed panel stack from initial route so "open in new panel" has a base panel.
+      const focusedRoute = store.get(focusedPanelRouteAtom)
+      if (!focusedRoute) {
+        updateFocusedPanelRoute(initialRoute as ViewRoute)
+      }
     }
-  }, [isReady, workspaceId])
+  }, [isReady, workspaceId, store, updateFocusedPanelRoute])
 
   // Process pending navigation when ready
   useEffect(() => {
@@ -861,9 +890,10 @@ export function NavigationProvider({
   // Listen for internal navigation events (from navigate() calls)
   useEffect(() => {
     const handleNavigateEvent = (event: Event) => {
-      const customEvent = event as CustomEvent<{ route: Route }>
+      const customEvent = event as CustomEvent<{ route: Route; newPanel?: boolean; targetLaneId?: 'main'; skipAutoSelect?: boolean }>
       if (customEvent.detail?.route) {
-        navigate(customEvent.detail.route)
+        const { route: r, newPanel, targetLaneId, skipAutoSelect } = customEvent.detail
+        navigate(r, { newPanel, targetLaneId, skipAutoSelect })
       }
     }
 
