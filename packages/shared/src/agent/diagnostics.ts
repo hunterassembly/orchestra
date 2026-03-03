@@ -140,7 +140,7 @@ function getProviderLabelFromType(providerType?: LlmProviderType, baseUrl?: stri
       case 'vertex': return 'Google Vertex AI';
       case 'codex': return 'Codex CLI';
       case 'pi':
-      case 'pi_compat': return 'Craft Agents Backend';
+      case 'pi_compat': return 'Orchestra Backend';
     }
   }
   // Fallback: derive from base URL or default

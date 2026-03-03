@@ -144,9 +144,9 @@ registerPiModelResolver((piAuthProvider) =>
   piAuthProvider ? getPiModelsForAuthProvider(piAuthProvider) : getAllPiModels()
 )
 
-// Custom URL scheme for deeplinks (e.g., craftagents://auth-complete)
-// Supports multi-instance dev: CRAFT_DEEPLINK_SCHEME env var (craftagents1, craftagents2, etc.)
-const DEEPLINK_SCHEME = process.env.CRAFT_DEEPLINK_SCHEME || 'craftagents'
+// Custom URL scheme for deeplinks (e.g., orchestra://auth-complete)
+// Supports multi-instance dev: CRAFT_DEEPLINK_SCHEME env var (orchestra1, orchestra2, etc.)
+const DEEPLINK_SCHEME = process.env.CRAFT_DEEPLINK_SCHEME || 'orchestra'
 
 let windowManager: WindowManager | null = null
 let sessionManager: SessionManager | null = null
@@ -156,10 +156,10 @@ let browserPaneManager: BrowserPaneManager | null = null
 let pendingDeepLink: string | null = null
 
 // Set app name early (before app.whenReady) to ensure correct macOS menu bar title
-// Supports multi-instance dev: CRAFT_APP_NAME env var (e.g., "Craft Agents [1]")
-app.setName(process.env.CRAFT_APP_NAME || 'Craft Agents')
+// Supports multi-instance dev: CRAFT_APP_NAME env var (e.g., "Orchestra [1]")
+app.setName(process.env.CRAFT_APP_NAME || 'Orchestra')
 
-// Register as default protocol client for craftagents:// URLs
+// Register as default protocol client for orchestra:// URLs
 // This must be done before app.whenReady() on some platforms
 if (process.defaultApp) {
   // Development mode: need to pass the app path

@@ -314,7 +314,7 @@ export function FreeFormInput({
     const groups: Record<string, typeof llmConnections> = {
       'Anthropic': [],
       'Codex CLI': [],
-      'Craft Agents Backend': [],
+      'Orchestra Backend': [],
     }
     for (const conn of llmConnections) {
       const provider = conn.providerType || 'anthropic'
@@ -324,7 +324,7 @@ export function FreeFormInput({
       } else if (provider === 'codex') {
         groups['Codex CLI'].push(conn)
       } else if (provider === 'pi' || provider === 'pi_compat') {
-        groups['Craft Agents Backend'].push(conn)
+        groups['Orchestra Backend'].push(conn)
       }
     }
     // Return only non-empty groups

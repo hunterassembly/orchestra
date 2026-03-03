@@ -1,8 +1,8 @@
 # Orchestra Mobile — What We're Building
 
-Orchestra is a mobile client for Craft Agents — a direct port of the Electron desktop app to an Expo (React Native) app, built to run on iPhone with the same styles, components, and functionality, adapted for a mobile form factor.
+Orchestra is a mobile client for Orchestra — a direct port of the Electron desktop app to an Expo (React Native) app, built to run on iPhone with the same styles, components, and functionality, adapted for a mobile form factor.
 
-The backend is Craft Agents running on your Mac. Orchestra connects to it over Tailscale. No cloud, no separate server, no new infrastructure — just your existing setup with a phone-native front door.
+The backend is Orchestra running on your Mac. Orchestra connects to it over Tailscale. No cloud, no separate server, no new infrastructure — just your existing setup with a phone-native front door.
 
 ## UX Goals
 

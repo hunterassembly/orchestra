@@ -27,6 +27,8 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 # caches
 .eslintcache
 .cache
+.expo/
+apps/mobile/.expo/
 *.tsbuildinfo
 .wrangler
 .mintlify

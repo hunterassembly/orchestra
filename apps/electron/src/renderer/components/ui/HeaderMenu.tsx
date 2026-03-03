@@ -32,7 +32,7 @@ interface HeaderMenuProps {
 export function HeaderMenu({ route, children, helpFeature }: HeaderMenuProps) {
   const handleOpenInNewWindow = async () => {
     const separator = route.includes('?') ? '&' : '?'
-    const url = `craftagents://${route}${separator}window=focused`
+    const url = `orchestra://${route}${separator}window=focused`
     try {
       await window.electronAPI?.openUrl(url)
     } catch (error) {

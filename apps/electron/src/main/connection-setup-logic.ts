@@ -81,7 +81,7 @@ export const BUILT_IN_CONNECTION_TEMPLATES: Record<string, {
     piAuthProvider: 'github-copilot',
   },
   'pi-api-key': {
-    name: 'Craft Agents Backend (API Key)',
+    name: 'Orchestra Backend (API Key)',
     providerType: 'pi',
     authType: 'api_key',
     // piAuthProvider set dynamically from setup.piAuthProvider

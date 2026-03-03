@@ -703,7 +703,7 @@ export const IPC_CHANNELS = {
   MENU_KEYBOARD_SHORTCUTS: 'menu:keyboardShortcuts',
   MENU_TOGGLE_FOCUS_MODE: 'menu:toggleFocusMode',
   MENU_TOGGLE_SIDEBAR: 'menu:toggleSidebar',
-  // Deep link navigation (main → renderer, for external craftagents:// URLs)
+  // Deep link navigation (main → renderer, for external orchestra:// URLs)
   DEEP_LINK_NAVIGATE: 'deeplink:navigate',
 
   // Auth
@@ -1079,7 +1079,7 @@ export interface ElectronAPI {
   onMenuToggleFocusMode(callback: () => void): () => void
   onMenuToggleSidebar(callback: () => void): () => void
 
-  // Deep link navigation listener (for external craftagents:// URLs)
+  // Deep link navigation listener (for external orchestra:// URLs)
   onDeepLinkNavigate(callback: (nav: DeepLinkNavigation) => void): () => void
 
   // Auth

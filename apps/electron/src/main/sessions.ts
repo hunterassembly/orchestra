@@ -1543,7 +1543,7 @@ export class SessionManager {
         onError: (err) => sessionLog.error(`[OAuth ${request.sourceSlug}] ${err}`),
       }, {
         sessionId: managed.id,
-        deeplinkScheme: process.env.CRAFT_DEEPLINK_SCHEME || 'craftagents',
+        deeplinkScheme: process.env.CRAFT_DEEPLINK_SCHEME || 'orchestra',
       })
 
       if (result.success) {

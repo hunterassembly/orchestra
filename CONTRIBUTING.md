@@ -1,6 +1,6 @@
-# Contributing to Craft Agents
+# Contributing to Orchestra
 
-Thank you for your interest in contributing to Craft Agents! This document provides guidelines and instructions for contributing.
+Thank you for your interest in contributing to Orchestra! This document provides guidelines and instructions for contributing.
 
 ## Getting Started
 

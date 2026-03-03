@@ -7,7 +7,9 @@ import { spawn, type Subprocess } from "bun";
 import { existsSync, rmSync, cpSync, readFileSync, statSync, mkdirSync } from "fs";
 import { join, basename } from "path";
 import * as esbuild from "esbuild";
-import { downloadUv, type Platform, type Arch } from "./build/common";
+
+type Platform = "darwin" | "win32" | "linux";
+type Arch = "arm64" | "x64";
 
 const ROOT_DIR = join(import.meta.dir, "..");
 const ELECTRON_DIR = join(ROOT_DIR, "apps/electron");
@@ -52,16 +54,9 @@ async function ensureBundledUvForCurrentPlatform(): Promise<void> {
     return;
   }
 
-  console.log(`⬇️  Bundled uv missing, bootstrapping ${platformKey}...`);
-  await downloadUv({
-    platform,
-    arch,
-    upload: false,
-    uploadLatest: false,
-    uploadScript: false,
-    rootDir: ROOT_DIR,
-    electronDir: ELECTRON_DIR,
-  });
+  // Keep dev startup resilient even when the uv bootstrap helper is unavailable.
+  // The app can still run if `uv` exists on PATH, and packaged builds include bundled uv.
+  console.warn(`⚠️ Bundled uv missing for ${platformKey} at ${uvPath}. Falling back to PATH 'uv'.`);
 }
 
 // Multi-instance detection (matches detect-instance.sh logic)
@@ -77,9 +72,9 @@ function detectInstance(): void {
     const instanceNum = match[1];
     process.env.CRAFT_INSTANCE_NUMBER = instanceNum;
     process.env.CRAFT_VITE_PORT = `${instanceNum}173`;
-    process.env.CRAFT_APP_NAME = `Craft Agents [${instanceNum}]`;
+    process.env.CRAFT_APP_NAME = `Orchestra [${instanceNum}]`;
     process.env.CRAFT_CONFIG_DIR = join(process.env.HOME || "", `.craft-agent-${instanceNum}`);
-    process.env.CRAFT_DEEPLINK_SCHEME = `craftagents${instanceNum}`;
+    process.env.CRAFT_DEEPLINK_SCHEME = `orchestra${instanceNum}`;
     console.log(`🔢 Instance ${instanceNum} detected: port=${process.env.CRAFT_VITE_PORT}, config=${process.env.CRAFT_CONFIG_DIR}`);
   }
 }
@@ -257,8 +252,8 @@ function getElectronEnv(): Record<string, string> {
     ...process.env as Record<string, string>,
     VITE_DEV_SERVER_URL: `http://localhost:${vitePort}`,
     CRAFT_CONFIG_DIR: process.env.CRAFT_CONFIG_DIR || "",
-    CRAFT_APP_NAME: process.env.CRAFT_APP_NAME || "Craft Agents",
-    CRAFT_DEEPLINK_SCHEME: process.env.CRAFT_DEEPLINK_SCHEME || "craftagents",
+    CRAFT_APP_NAME: process.env.CRAFT_APP_NAME || "Orchestra",
+    CRAFT_DEEPLINK_SCHEME: process.env.CRAFT_DEEPLINK_SCHEME || "orchestra",
     CRAFT_INSTANCE_NUMBER: process.env.CRAFT_INSTANCE_NUMBER || "",
   };
 }

@@ -1,6 +1,6 @@
 # Orchestra Expo iOS Implementation Plan
 
-This document defines a full implementation plan for an iOS Expo app that preserves Orchestra/Craft Agents behavior and design language while using the Mac desktop app as the runtime host.
+This document defines a full implementation plan for an iOS Expo app that preserves Orchestra/Orchestra behavior and design language while using the Mac desktop app as the runtime host.
 
 ## Decision Summary
 
@@ -37,6 +37,40 @@ Pick up iPhone and continue the exact same conversation/workflow you started on 
 - Gateway runtime wiring and phone pairing are now implemented end-to-end.
 - The critical path is now Step 5 and Step 6: attachments/interactions and settings/diagnostics.
 - Design-system parity must stay strict by continuing to use existing mobile primitives and theme tokens.
+
+## Expo Go Launch Reliability (Audit on 2026-03-03)
+
+This section captures the exact cause of the "tap development server and nothing happens" issue and the stable launch path.
+
+### Root Causes Found
+
+1. Wrong project root:
+   - Running `npx expo start` from `/orchestra` starts Expo against the repo root, not `apps/mobile`.
+   - Result: Metro iOS bundling fails (`Unable to resolve "../../App" from "node_modules/expo/AppEntry.js"`).
+2. Wrong runtime mode:
+   - In `apps/mobile`, plain `expo start` defaults to **development build** mode because `expo-dev-client` is installed.
+   - Result: server URL is `exp+orchestra-mobile://...` (dev-client link), which Expo Go cannot open.
+
+### Stable Launch Commands
+
+Use one of these from repo root:
+
+1. `bun run mobile:start` (LAN + Expo Go)
+2. `bun run mobile:start:tunnel` (Tunnel + Expo Go)
+
+Or directly in `apps/mobile`:
+
+1. `npx expo start --go`
+2. `npx expo start --go --tunnel`
+
+### Mode Check Before Scanning QR
+
+In terminal output, confirm:
+
+- `Using Expo Go`
+- not `Using development build`
+
+If it says development build, press `s` to switch, or restart with `--go`.
 
 ## Scope
 

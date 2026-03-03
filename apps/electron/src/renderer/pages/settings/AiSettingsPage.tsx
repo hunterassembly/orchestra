@@ -213,10 +213,10 @@ function ConnectionRow({ connection, isLastConnection, onRenameClick, onDelete, 
         const piLabel = !isSubscription && connection.piAuthProvider
           ? PI_AUTH_PROVIDER_LABELS[connection.piAuthProvider]
           : null
-        parts.push(piLabel ?? 'Craft Agents Backend')
+        parts.push(piLabel ?? 'Orchestra Backend')
         break
       }
-      case 'pi_compat': parts.push('Craft Agents Backend Compatible'); break
+      case 'pi_compat': parts.push('Orchestra Backend Compatible'); break
       default: parts.push(provider || 'Unknown')
     }
 
@@ -471,7 +471,7 @@ function WorkspaceOverrideCard({ workspace, llmConnections, onSettingsChange }: 
                     label: conn.name,
                     description: conn.providerType === 'anthropic' ? 'Anthropic' :
                                  conn.providerType === 'codex' ? 'Codex CLI' :
-                                 conn.providerType === 'pi' ? 'Craft Agents Backend' :
+                                 conn.providerType === 'pi' ? 'Orchestra Backend' :
                                  conn.providerType || 'Unknown',
                   })),
                 ]}
@@ -845,8 +845,8 @@ export default function AiSettingsPage() {
                                    conn.providerType === 'bedrock' ? 'AWS Bedrock' :
                                    conn.providerType === 'vertex' ? 'Google Vertex' :
                                    conn.providerType === 'codex' ? 'Codex CLI' :
-                                   conn.providerType === 'pi' ? 'Craft Agents Backend' :
-                                   conn.providerType === 'pi_compat' ? 'Craft Agents Backend Compatible' :
+                                   conn.providerType === 'pi' ? 'Orchestra Backend' :
+                                   conn.providerType === 'pi_compat' ? 'Orchestra Backend Compatible' :
                                    conn.providerType || 'Unknown',
                     }))}
                   />

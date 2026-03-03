@@ -221,7 +221,7 @@ export function registerIpcHandlers(sessionManager: SessionManager, windowManage
   // Open a session in a new window
   ipcMain.handle(IPC_CHANNELS.OPEN_SESSION_IN_NEW_WINDOW, async (_event, workspaceId: string, sessionId: string) => {
     // Build deep link for session navigation
-    const deepLink = `craftagents://allSessions/session/${sessionId}`
+    const deepLink = `orchestra://allSessions/session/${sessionId}`
     windowManager.createWindow({
       workspaceId,
       focused: true,
@@ -1146,16 +1146,16 @@ export function registerIpcHandlers(sessionManager: SessionManager, windowManage
     return getDismissedUpdateVersion()
   })
 
-  // Shell operations - open URL in external browser (or handle craftagents:// internally)
+  // Shell operations - open URL in external browser (or handle orchestra:// internally)
   ipcMain.handle(IPC_CHANNELS.OPEN_URL, async (_event, url: string) => {
     ipcLog.info('[OPEN_URL] Received request:', url)
     try {
       // Validate URL format
       const parsed = new URL(url)
 
-      // Handle craftagents:// URLs internally via deep link handler
+      // Handle orchestra:// URLs internally via deep link handler
       // This ensures ?window= params work correctly for "Open in New Window"
-      if (parsed.protocol === 'craftagents:') {
+      if (parsed.protocol === 'orchestra:') {
         ipcLog.info('[OPEN_URL] Handling as deep link')
         const { handleDeepLink } = await import('./deep-link')
         const result = await handleDeepLink(url, windowManager)
@@ -1398,10 +1398,10 @@ export function registerIpcHandlers(sessionManager: SessionManager, windowManage
       // Pi API key flow: set piAuthProvider from setup data (e.g. 'anthropic', 'google', 'openai')
       if (setup.piAuthProvider) {
         updates.piAuthProvider = setup.piAuthProvider
-        // Update connection name to show the actual provider (e.g. "Craft Agents Backend (Google AI Studio)")
+        // Update connection name to show the actual provider (e.g. "Orchestra Backend (Google AI Studio)")
         const providerName = piAuthProviderDisplayName(setup.piAuthProvider)
         if (providerName) {
-          updates.name = `Craft Agents Backend (${providerName})`
+          updates.name = `Orchestra Backend (${providerName})`
         }
         // Only set default models when using standard Pi provider AND user didn't pick explicit models
         if (!hasCustomEndpoint && !setup.models?.length) {

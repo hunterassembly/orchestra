@@ -22,7 +22,7 @@ const BetaBadge = () => (
 const SEGMENT_DESCRIPTIONS: Record<ProviderSegment, React.ReactNode> = {
   anthropic: <>Use Claude Agent SDK as the main agent.<br />Configure with your Claude subscription or API key.</>,
   codex: <>Use OpenAI Codex runtime as the main agent.<br />Sign in with ChatGPT Plus or Pro.</>,
-  pi: <>Use Craft Agents Backend as the main agent.<BetaBadge /><br />Configure with your API key or provider OAuth.</>,
+  pi: <>Use Orchestra Backend as the main agent.<BetaBadge /><br />Configure with your API key or provider OAuth.</>,
 }
 
 /**
@@ -96,7 +96,7 @@ const API_SETUP_OPTIONS: ApiSetupOption[] = [
   {
     id: 'pi_copilot_oauth',
     name: 'GitHub Copilot',
-    description: 'Use your GitHub Copilot subscription with Craft Agents Backend.',
+    description: 'Use your GitHub Copilot subscription with Orchestra Backend.',
     icon: <Cpu className="size-4" />,
     providerType: 'pi',
   },
