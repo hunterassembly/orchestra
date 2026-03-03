@@ -3397,6 +3397,18 @@ export function registerIpcHandlers(sessionManager: SessionManager, windowManage
     setPushToTalkWhisper(enabled)
   })
 
+  // Get preferred microphone deviceId for push-to-talk
+  ipcMain.handle(IPC_CHANNELS.INPUT_GET_WHISPER_MICROPHONE_ID, async () => {
+    const { getWhisperMicrophoneId } = await import('@craft-agent/shared/config/storage')
+    return getWhisperMicrophoneId()
+  })
+
+  // Set preferred microphone deviceId for push-to-talk
+  ipcMain.handle(IPC_CHANNELS.INPUT_SET_WHISPER_MICROPHONE_ID, async (_event, deviceId: string) => {
+    const { setWhisperMicrophoneId } = await import('@craft-agent/shared/config/storage')
+    setWhisperMicrophoneId(deviceId)
+  })
+
   // Transcribe audio blob using local whisper backend
   ipcMain.handle(IPC_CHANNELS.INPUT_TRANSCRIBE_LOCAL_WHISPER, async (_event, audioBase64: string, mimeType: string) => {
     const { transcribeWithLocalWhisper } = await import('./local-whisper')

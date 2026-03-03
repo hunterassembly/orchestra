@@ -869,6 +869,8 @@ export const IPC_CHANNELS = {
   INPUT_SET_SPELL_CHECK: 'input:setSpellCheck',
   INPUT_GET_PUSH_TO_TALK_WHISPER: 'input:getPushToTalkWhisper',
   INPUT_SET_PUSH_TO_TALK_WHISPER: 'input:setPushToTalkWhisper',
+  INPUT_GET_WHISPER_MICROPHONE_ID: 'input:getWhisperMicrophoneId',
+  INPUT_SET_WHISPER_MICROPHONE_ID: 'input:setWhisperMicrophoneId',
   INPUT_TRANSCRIBE_LOCAL_WHISPER: 'input:transcribeLocalWhisper',
 
   // Power settings
@@ -1251,6 +1253,8 @@ export interface ElectronAPI {
   setSpellCheck(enabled: boolean): Promise<void>
   getPushToTalkWhisper(): Promise<boolean>
   setPushToTalkWhisper(enabled: boolean): Promise<void>
+  getWhisperMicrophoneId(): Promise<string>
+  setWhisperMicrophoneId(deviceId: string): Promise<void>
   transcribeWithLocalWhisper(audioBase64: string, mimeType: string): Promise<string>
 
   // Power settings

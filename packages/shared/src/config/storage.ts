@@ -61,7 +61,8 @@ export interface StoredConfig {
   autoCapitalisation?: boolean;  // Auto-capitalize first letter when typing (default: true)
   sendMessageKey?: 'enter' | 'cmd-enter';  // Key to send messages (default: 'enter')
   spellCheck?: boolean;  // Enable spell check in input (default: false)
-  pushToTalkWhisper?: boolean;  // Hold Space to dictate with local Whisper (default: false)
+  pushToTalkWhisper?: boolean;  // Hold Space to dictate with local Whisper (default: true)
+  whisperMicrophoneId?: string;  // Preferred microphone deviceId for push-to-talk (default: 'default')
   // Power settings
   keepAwakeWhileRunning?: boolean;  // Prevent screen sleep while sessions are running (default: false)
   // Tool metadata
@@ -303,7 +304,7 @@ export function getPushToTalkWhisper(): boolean {
     return config.pushToTalkWhisper;
   }
   const defaults = loadConfigDefaults();
-  return defaults.defaults.pushToTalkWhisper ?? false;
+  return defaults.defaults.pushToTalkWhisper ?? true;
 }
 
 /**
@@ -313,6 +314,28 @@ export function setPushToTalkWhisper(enabled: boolean): void {
   const config = loadStoredConfig();
   if (!config) return;
   config.pushToTalkWhisper = enabled;
+  saveConfig(config);
+}
+
+/**
+ * Get preferred microphone deviceId for local whisper push-to-talk.
+ */
+export function getWhisperMicrophoneId(): string {
+  const config = loadStoredConfig();
+  if (config?.whisperMicrophoneId !== undefined) {
+    return config.whisperMicrophoneId;
+  }
+  const defaults = loadConfigDefaults();
+  return defaults.defaults.whisperMicrophoneId ?? 'default';
+}
+
+/**
+ * Set preferred microphone deviceId for local whisper push-to-talk.
+ */
+export function setWhisperMicrophoneId(deviceId: string): void {
+  const config = loadStoredConfig();
+  if (!config) return;
+  config.whisperMicrophoneId = deviceId;
   saveConfig(config);
 }
 

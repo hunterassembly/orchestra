@@ -25,6 +25,15 @@ import {
   SettingsMenuSelectRow,
 } from '@/components/settings'
 
+function simplifyMicrophoneLabel(label: string | undefined, index: number): string {
+  const raw = (label || '').trim()
+  if (!raw) return `Microphone ${index + 1}`
+
+  // Remove noisy trailing hardware IDs e.g. " (19f7:0050)"
+  const withoutIds = raw.replace(/\s*\([0-9a-f]{4}:[0-9a-f]{4}\)\s*$/i, '')
+  return withoutIds.trim() || `Microphone ${index + 1}`
+}
+
 export const meta: DetailsPageMeta = {
   navigator: 'settings',
   slug: 'input',
@@ -41,6 +50,10 @@ export default function InputSettingsPage() {
   // Spell check state (default off)
   const [spellCheck, setSpellCheck] = useState(false)
   const [pushToTalkWhisper, setPushToTalkWhisper] = useState(false)
+  const [whisperMicrophoneId, setWhisperMicrophoneId] = useState('default')
+  const [microphones, setMicrophones] = useState<Array<{ value: string; label: string; description?: string }>>([
+    { value: 'default', label: 'Default microphone' },
+  ])
 
   // Send message key state
   const [sendMessageKey, setSendMessageKey] = useState<'enter' | 'cmd-enter'>('enter')
@@ -50,21 +63,50 @@ export default function InputSettingsPage() {
     const loadSettings = async () => {
       if (!window.electronAPI) return
       try {
-        const [autoCapEnabled, spellCheckEnabled, sendKey, pushToTalkEnabled] = await Promise.all([
+        const [autoCapEnabled, spellCheckEnabled, sendKey, pushToTalkEnabled, micId] = await Promise.all([
           window.electronAPI.getAutoCapitalisation(),
           window.electronAPI.getSpellCheck(),
           window.electronAPI.getSendMessageKey(),
           window.electronAPI.getPushToTalkWhisper(),
+          window.electronAPI.getWhisperMicrophoneId(),
         ])
         setAutoCapitalisation(autoCapEnabled)
         setSpellCheck(spellCheckEnabled)
         setSendMessageKey(sendKey)
         setPushToTalkWhisper(pushToTalkEnabled)
+        setWhisperMicrophoneId(micId || 'default')
       } catch (error) {
         console.error('Failed to load input settings:', error)
       }
     }
     loadSettings()
+  }, [])
+
+  useEffect(() => {
+    const loadMicrophones = async () => {
+      if (!navigator.mediaDevices?.enumerateDevices) return
+      try {
+        const devices = await navigator.mediaDevices.enumerateDevices()
+        const audioInputs = devices.filter(d => d.kind === 'audioinput')
+        const options = [
+          { value: 'default', label: 'Default microphone' },
+          ...audioInputs
+            .filter(d => d.deviceId !== 'default')
+            .map((d, idx) => ({
+              value: d.deviceId,
+              label: simplifyMicrophoneLabel(d.label, idx),
+            })),
+        ]
+        setMicrophones(options)
+      } catch (error) {
+        console.error('Failed to enumerate microphones:', error)
+      }
+    }
+
+    void loadMicrophones()
+    const onDeviceChange = () => { void loadMicrophones() }
+    navigator.mediaDevices?.addEventListener?.('devicechange', onDeviceChange)
+    return () => navigator.mediaDevices?.removeEventListener?.('devicechange', onDeviceChange)
   }, [])
 
   const handleAutoCapitalisationChange = useCallback(async (enabled: boolean) => {
@@ -80,6 +122,11 @@ export default function InputSettingsPage() {
   const handlePushToTalkWhisperChange = useCallback(async (enabled: boolean) => {
     setPushToTalkWhisper(enabled)
     await window.electronAPI.setPushToTalkWhisper(enabled)
+  }, [])
+
+  const handleWhisperMicrophoneChange = useCallback((value: string) => {
+    setWhisperMicrophoneId(value)
+    void window.electronAPI.setWhisperMicrophoneId(value)
   }, [])
 
   const handleSendMessageKeyChange = useCallback((value: string) => {
@@ -115,6 +162,13 @@ export default function InputSettingsPage() {
                     description="Hold Space in the input to record, then transcribe with your local Whisper setup."
                     checked={pushToTalkWhisper}
                     onCheckedChange={handlePushToTalkWhisperChange}
+                  />
+                  <SettingsMenuSelectRow
+                    label="Microphone"
+                    description="Choose which microphone is used for push-to-talk dictation."
+                    value={whisperMicrophoneId}
+                    onValueChange={handleWhisperMicrophoneChange}
+                    options={microphones}
                   />
                 </SettingsCard>
               </SettingsSection>

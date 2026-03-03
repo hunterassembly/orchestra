@@ -86,6 +86,7 @@ function formatTokenCount(tokens: number): string {
 /** Platform-specific modifier key for keyboard shortcuts */
 const cmdKey = isMac ? '⌘' : 'Ctrl'
 const PUSH_TO_TALK_HOLD_MS = 220
+const PUSH_TO_TALK_RELEASE_DELAY_MS = 100
 
 /** Default rotating placeholders for onboarding/empty state */
 const DEFAULT_PLACEHOLDERS = [
@@ -150,6 +151,33 @@ function getSupportedAudioMimeType(): string | null {
   }
 
   return null
+}
+
+async function getDefaultMicrophoneConstraints(preferredDeviceId?: string): Promise<MediaStreamConstraints['audio']> {
+  // Default to the OS active/default microphone when available.
+  if (!navigator.mediaDevices?.enumerateDevices) return true
+
+  try {
+    const devices = await navigator.mediaDevices.enumerateDevices()
+    const inputDevices = devices.filter(d => d.kind === 'audioinput')
+    const preferredMic = preferredDeviceId && preferredDeviceId !== 'default'
+      ? inputDevices.find(d => d.deviceId === preferredDeviceId)
+      : null
+    const defaultMic = preferredMic
+      ?? inputDevices.find(d => d.deviceId === 'default')
+      ?? inputDevices[0]
+
+    if (!defaultMic) return true
+
+    return {
+      deviceId: { ideal: defaultMic.deviceId },
+      echoCancellation: true,
+      noiseSuppression: true,
+      autoGainControl: true,
+    }
+  } catch {
+    return true
+  }
 }
 
 export interface FreeFormInputProps {
@@ -502,9 +530,11 @@ export function FreeFormInput({
   const [sendMessageKey, setSendMessageKey] = React.useState<'enter' | 'cmd-enter'>('enter')
   const [spellCheck, setSpellCheck] = React.useState(false)
   const [pushToTalkWhisper, setPushToTalkWhisper] = React.useState(false)
+  const [whisperMicrophoneId, setWhisperMicrophoneId] = React.useState('default')
   const [isDictating, setIsDictating] = React.useState(false)
 
   const pushToTalkTimerRef = React.useRef<NodeJS.Timeout | null>(null)
+  const pushToTalkStopTimerRef = React.useRef<NodeJS.Timeout | null>(null)
   const pushToTalkPressedRef = React.useRef(false)
   const pushToTalkInterceptedRef = React.useRef(false)
   const mediaRecorderRef = React.useRef<MediaRecorder | null>(null)
@@ -516,16 +546,18 @@ export function FreeFormInput({
     const loadInputSettings = async () => {
       if (!window.electronAPI) return
       try {
-        const [autoCapEnabled, sendKey, spellCheckEnabled, pushToTalkEnabled] = await Promise.all([
+        const [autoCapEnabled, sendKey, spellCheckEnabled, pushToTalkEnabled, preferredMicId] = await Promise.all([
           window.electronAPI.getAutoCapitalisation(),
           window.electronAPI.getSendMessageKey(),
           window.electronAPI.getSpellCheck(),
           window.electronAPI.getPushToTalkWhisper(),
+          window.electronAPI.getWhisperMicrophoneId(),
         ])
         setAutoCapitalisation(autoCapEnabled)
         setSendMessageKey(sendKey ?? 'enter')
         setSpellCheck(spellCheckEnabled)
         setPushToTalkWhisper(pushToTalkEnabled)
+        setWhisperMicrophoneId(preferredMicId || 'default')
       } catch (error) {
         console.error('Failed to load input settings:', error)
       }
@@ -536,6 +568,7 @@ export function FreeFormInput({
   React.useEffect(() => {
     return () => {
       if (pushToTalkTimerRef.current) clearTimeout(pushToTalkTimerRef.current)
+      if (pushToTalkStopTimerRef.current) clearTimeout(pushToTalkStopTimerRef.current)
       if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
         mediaRecorderRef.current.stop()
       }
@@ -1208,7 +1241,8 @@ export function FreeFormInput({
     let stream: MediaStream | null = null
 
     try {
-      stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      const audioConstraints = await getDefaultMicrophoneConstraints(whisperMicrophoneId)
+      stream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints })
       const mimeType = getSupportedAudioMimeType()
       if (!mimeType) {
         throw new Error('This browser cannot record audio in a compatible format')
@@ -1241,7 +1275,7 @@ export function FreeFormInput({
         pushToTalkTimerRef.current = null
       }
     }
-  }, [pushToTalkWhisper, disabled, isDictating])
+  }, [pushToTalkWhisper, disabled, isDictating, whisperMicrophoneId])
 
   const stopPushToTalkRecording = React.useCallback(async () => {
     const recorder = mediaRecorderRef.current
@@ -1269,6 +1303,9 @@ export function FreeFormInput({
 
     try {
       const audioBlob = await recordingDone
+      if (audioBlob.size === 0) {
+        throw new Error('Captured audio blob is empty (0 bytes)')
+      }
       const audioBase64 = await blobToBase64(audioBlob)
       const transcript = await window.electronAPI.transcribeWithLocalWhisper(audioBase64, audioBlob.type)
       const cleanTranscript = transcript.trim()
@@ -1277,7 +1314,8 @@ export function FreeFormInput({
       }
     } catch (error) {
       console.error('[FreeFormInput] Whisper transcription failed:', error)
-      toast.error('Local Whisper transcription failed')
+      const message = error instanceof Error ? error.message : String(error)
+      toast.error(`Local Whisper transcription failed: ${message}`)
     } finally {
       mediaChunksRef.current = []
       setIsDictating(false)
@@ -1290,22 +1328,24 @@ export function FreeFormInput({
       clearTimeout(pushToTalkTimerRef.current)
       pushToTalkTimerRef.current = null
     }
+    if (pushToTalkStopTimerRef.current) {
+      clearTimeout(pushToTalkStopTimerRef.current)
+      pushToTalkStopTimerRef.current = null
+    }
 
     const wasDictating = isDictating || !!mediaRecorderRef.current
     pushToTalkPressedRef.current = false
     pushToTalkInterceptedRef.current = false
 
-    if (wasDictating) {
-      event?.preventDefault()
-      void stopPushToTalkRecording()
-      return
-    }
+    event?.preventDefault()
 
-    if (event && !event.shiftKey && !event.metaKey && !event.ctrlKey && !event.altKey && !disabled) {
-      event.preventDefault()
-      insertTextAtCursor(' ')
+    if (wasDictating) {
+      pushToTalkStopTimerRef.current = setTimeout(() => {
+        void stopPushToTalkRecording()
+        pushToTalkStopTimerRef.current = null
+      }, PUSH_TO_TALK_RELEASE_DELAY_MS)
     }
-  }, [disabled, insertTextAtCursor, isDictating, stopPushToTalkRecording])
+  }, [isDictating, stopPushToTalkRecording])
 
   React.useEffect(() => {
     const handleWindowKeyUp = (event: KeyboardEvent) => {
@@ -1334,7 +1374,6 @@ export function FreeFormInput({
     if (
       pushToTalkWhisper &&
       e.key === ' ' &&
-      !e.repeat &&
       !e.shiftKey &&
       !e.metaKey &&
       !e.ctrlKey &&
@@ -1346,6 +1385,9 @@ export function FreeFormInput({
       !disabled
     ) {
       e.preventDefault()
+      if (e.repeat) {
+        return
+      }
       pushToTalkPressedRef.current = true
       pushToTalkInterceptedRef.current = true
       if (pushToTalkTimerRef.current) clearTimeout(pushToTalkTimerRef.current)

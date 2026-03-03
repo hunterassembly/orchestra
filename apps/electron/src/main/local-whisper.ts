@@ -10,6 +10,17 @@ const execFileAsync = promisify(execFile)
 
 const DEFAULT_TIMEOUT_MS = 2 * 60 * 1000
 
+function formatExecError(error: unknown): string {
+  if (!(error instanceof Error)) return String(error)
+  const anyErr = error as Error & { code?: string | number; stdout?: string; stderr?: string; signal?: string }
+  const parts = [anyErr.message]
+  if (anyErr.code !== undefined) parts.push(`code=${String(anyErr.code)}`)
+  if (anyErr.signal) parts.push(`signal=${anyErr.signal}`)
+  if (anyErr.stderr?.trim()) parts.push(`stderr=${anyErr.stderr.trim().slice(0, 400)}`)
+  if (anyErr.stdout?.trim()) parts.push(`stdout=${anyErr.stdout.trim().slice(0, 200)}`)
+  return parts.join(' | ')
+}
+
 function extensionForMime(mimeType: string): string {
   if (mimeType.includes('webm')) return 'webm'
   if (mimeType.includes('ogg')) return 'ogg'
@@ -112,6 +123,9 @@ export async function transcribeWithLocalWhisper(audioBase64: string, mimeType: 
 
   try {
     const audioBuffer = Buffer.from(audioBase64, 'base64')
+    if (!audioBuffer || audioBuffer.length === 0) {
+      throw new Error('Captured audio buffer is empty (0 bytes)')
+    }
     await writeFile(audioPath, audioBuffer)
 
     const errors: string[] = []
@@ -120,20 +134,20 @@ export async function transcribeWithLocalWhisper(audioBase64: string, mimeType: 
       const text = await runWhisperCpp(audioPath, tempDir)
       if (text) return text
     } catch (error) {
-      errors.push(`whisper.cpp failed: ${error instanceof Error ? error.message : String(error)}`)
+      errors.push(`whisper.cpp failed: ${formatExecError(error)}`)
     }
 
     try {
       const text = await runPythonWhisper(audioPath, tempDir)
       if (text) return text
     } catch (error) {
-      errors.push(`python whisper failed: ${error instanceof Error ? error.message : String(error)}`)
+      errors.push(`python whisper failed: ${formatExecError(error)}`)
     }
 
     throw new Error(
       errors.length > 0
-        ? `Unable to transcribe audio. ${errors.join(' | ')}`
-        : 'Unable to transcribe audio. No local Whisper backend produced a transcript.'
+        ? `Unable to transcribe audio (mime=${mimeType}, bytes=${audioBuffer.length}). ${errors.join(' | ')}`
+        : `Unable to transcribe audio (mime=${mimeType}, bytes=${audioBuffer.length}). No local Whisper backend produced a transcript.`
     )
   } finally {
     await rm(tempDir, { recursive: true, force: true })

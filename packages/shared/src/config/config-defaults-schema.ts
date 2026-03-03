@@ -18,6 +18,7 @@ export interface ConfigDefaults {
     sendMessageKey: 'enter' | 'cmd-enter';
     spellCheck: boolean;
     pushToTalkWhisper: boolean;
+    whisperMicrophoneId: string;
     keepAwakeWhileRunning: boolean;
     richToolDescriptions: boolean;
   };
