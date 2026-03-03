@@ -3,6 +3,8 @@ import * as SecureStore from "expo-secure-store";
 import { useStore } from "zustand";
 import { createStore } from "zustand/vanilla";
 
+import { normalizeRuntimeHost } from "@/runtime-host";
+
 export const AUTH_STORAGE_KEYS = {
   accessToken: "orchestra.auth.accessToken",
   refreshToken: "orchestra.auth.refreshToken",
@@ -15,6 +17,7 @@ export const AUTH_STORAGE_KEYS = {
 export type PairingState = {
   status: "idle" | "starting" | "confirming" | "paired" | "error";
   pairingId: string | null;
+  code: string | null;
   host: string | null;
   expiresAt: number | null;
   error: string | null;
@@ -57,6 +60,7 @@ export type AuthStoreState = {
 const INITIAL_PAIRING_STATE: PairingState = {
   status: "idle",
   pairingId: null,
+  code: null,
   host: null,
   expiresAt: null,
   error: null,
@@ -102,14 +106,20 @@ export function createAuthStore() {
         SecureStore.getItemAsync(AUTH_STORAGE_KEYS.legacyToken),
       ]);
 
+      const normalizedRuntimeHost = normalizeRuntimeHost(runtimeHost);
+
       set({
         accessToken: accessToken ?? legacyToken,
         refreshToken,
         tokenExpiresAt: parseExpiresAt(expiresAt),
         deviceId,
-        runtimeHost,
+        runtimeHost: normalizedRuntimeHost,
         isHydrated: true,
       });
+
+      if (runtimeHost !== null && runtimeHost !== normalizedRuntimeHost) {
+        await persistString(AUTH_STORAGE_KEYS.runtimeHost, normalizedRuntimeHost);
+      }
     },
 
     setTokens: async (tokens) => {
@@ -184,8 +194,9 @@ export function createAuthStore() {
     },
 
     setRuntimeHost: async (host) => {
-      set({ runtimeHost: host });
-      await persistString(AUTH_STORAGE_KEYS.runtimeHost, host);
+      const normalizedHost = normalizeRuntimeHost(host);
+      set({ runtimeHost: normalizedHost });
+      await persistString(AUTH_STORAGE_KEYS.runtimeHost, normalizedHost);
     },
 
     isAccessTokenExpired: (now = Date.now()) => {

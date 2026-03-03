@@ -799,6 +799,7 @@ interface PendingDelta {
 export class SessionManager {
   private sessions: Map<string, ManagedSession> = new Map()
   private windowManager: WindowManager | null = null
+  private eventListeners: Set<(event: SessionEvent) => void> = new Set()
   // Delta batching for performance - reduces IPC events from 50+/sec to ~20/sec
   private pendingDeltas: Map<string, PendingDelta> = new Map()
   private deltaFlushTimers: Map<string, NodeJS.Timeout> = new Map()
@@ -845,6 +846,13 @@ export class SessionManager {
 
   setWindowManager(wm: WindowManager): void {
     this.windowManager = wm
+  }
+
+  addEventListener(listener: (event: SessionEvent) => void): () => void {
+    this.eventListeners.add(listener)
+    return () => {
+      this.eventListeners.delete(listener)
+    }
   }
 
   setBrowserPaneManager(bpm: import('./browser-pane-manager').BrowserPaneManager): void {
@@ -5731,6 +5739,14 @@ To view this task's output:
   }
 
   private sendEvent(event: SessionEvent, workspaceId?: string): void {
+    for (const listener of this.eventListeners) {
+      try {
+        listener(event)
+      } catch {
+        // Ignore listener failures so UI dispatch remains unaffected.
+      }
+    }
+
     if (!this.windowManager) {
       sessionLog.warn('Cannot send event - no window manager')
       return

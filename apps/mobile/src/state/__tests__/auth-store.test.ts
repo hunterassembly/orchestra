@@ -58,6 +58,24 @@ describe("auth store", () => {
     expect(store.getState().accessToken).toBe("legacy-token");
   });
 
+  it("normalizes runtime host during hydrate and persists canonical value", async () => {
+    mockedSecureStore.getItemAsync.mockImplementation(async (key: string) => {
+      if (key === AUTH_STORAGE_KEYS.runtimeHost) {
+        return "192.168.1.2:7842/api";
+      }
+      return null;
+    });
+
+    const store = createAuthStore();
+    await store.getState().hydrate();
+
+    expect(store.getState().runtimeHost).toBe("http://192.168.1.2:7842");
+    expect(mockedSecureStore.setItemAsync).toHaveBeenCalledWith(
+      AUTH_STORAGE_KEYS.runtimeHost,
+      "http://192.168.1.2:7842",
+    );
+  });
+
   it("persists setTokens and clears credentials", async () => {
     const store = createAuthStore();
 
@@ -145,5 +163,17 @@ describe("auth store", () => {
     expect(store.getState().requiresRePair).toBe(true);
     expect(store.getState().accessToken).toBeNull();
     expect(store.getState().refreshToken).toBeNull();
+  });
+
+  it("normalizes runtime host when setting runtime host", async () => {
+    const store = createAuthStore();
+
+    await store.getState().setRuntimeHost("192.168.1.3:7842/path");
+
+    expect(store.getState().runtimeHost).toBe("http://192.168.1.3:7842");
+    expect(mockedSecureStore.setItemAsync).toHaveBeenCalledWith(
+      AUTH_STORAGE_KEYS.runtimeHost,
+      "http://192.168.1.3:7842",
+    );
   });
 });

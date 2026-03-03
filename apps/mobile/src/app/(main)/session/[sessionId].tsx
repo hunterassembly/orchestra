@@ -397,6 +397,13 @@ export default function SessionScreen() {
     }
   }, [client, isInterrupting, sessionId]);
 
+  const handleRepairDevice = useCallback(() => {
+    void (async () => {
+      await triggerRePair();
+      router.replace("/(onboarding)/find-runtime");
+    })();
+  }, [router, triggerRePair]);
+
   const handleScroll = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
     const { layoutMeasurement, contentOffset, contentSize } = event.nativeEvent;
     const threshold = 96;
@@ -955,7 +962,7 @@ export default function SessionScreen() {
         </View>
 
         <View style={{ paddingHorizontal: theme.spacing.md, paddingBottom: theme.spacing.xs }}>
-          <Button onPress={() => void triggerRePair()} variant="ghost">
+          <Button onPress={() => handleRepairDevice()} variant="ghost">
             Re-pair Device
           </Button>
         </View>

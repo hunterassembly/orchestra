@@ -90,6 +90,7 @@ import { getPiModelsForAuthProvider, getAllPiModels } from '@craft-agent/shared/
 import { initNotificationService, initBadgeIcon, initInstanceBadge } from './notifications'
 import { checkForUpdatesOnLaunch, setWindowManager as setAutoUpdateWindowManager, isUpdating } from './auto-update'
 import { validateGitBashPath } from './git-bash'
+import { createMobileGatewayController, type MobileGatewayController } from './mobile-gateway'
 
 // Initialize electron-log for renderer process support
 log.initialize()
@@ -151,6 +152,7 @@ const DEEPLINK_SCHEME = process.env.CRAFT_DEEPLINK_SCHEME || 'orchestra'
 let windowManager: WindowManager | null = null
 let sessionManager: SessionManager | null = null
 let browserPaneManager: BrowserPaneManager | null = null
+let mobileGatewayController: MobileGatewayController | null = null
 
 // Store pending deep link if app not ready yet (cold start)
 let pendingDeepLink: string | null = null
@@ -399,6 +401,19 @@ app.whenReady().then(async () => {
     // Initialize auth (must happen after window creation for error reporting)
     await sessionManager.initialize()
 
+    // Start the mobile gateway so Expo clients can pair against this runtime.
+    try {
+      mobileGatewayController = createMobileGatewayController(sessionManager)
+      await mobileGatewayController.start()
+    } catch (err) {
+      if (err instanceof Error) {
+        mainLog.error('Failed to start mobile gateway:', err.message, err.stack)
+      } else {
+        mainLog.error('Failed to start mobile gateway:', err)
+      }
+      mobileGatewayController = null
+    }
+
     // Start periodic model refresh after auth is initialized
     modelRefreshService.startAll()
 
@@ -539,6 +554,21 @@ app.on('before-quit', async (event) => {
 
     // Stop all model refresh timers
     getModelRefreshService().stopAll()
+
+    // Stop mobile gateway listener for a clean shutdown.
+    if (mobileGatewayController) {
+      try {
+        await mobileGatewayController.stop()
+      } catch (error) {
+        if (error instanceof Error) {
+          mainLog.error('Failed to stop mobile gateway:', error.message, error.stack)
+        } else {
+          mainLog.error('Failed to stop mobile gateway:', error)
+        }
+      } finally {
+        mobileGatewayController = null
+      }
+    }
 
     // Clean up power manager (release power blocker)
     const { cleanup: cleanupPowerManager } = await import('./power-manager')

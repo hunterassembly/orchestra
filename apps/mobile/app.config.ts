@@ -13,9 +13,7 @@ export default {
         ITSAppUsesNonExemptEncryption: false,
       },
     },
-    runtimeVersion: {
-      policy: "appVersion",
-    },
+    runtimeVersion: "0.1.0",
     updates: {
       url: "https://u.expo.dev/b9368ed7-ed09-497c-8488-811cc225e3d2",
     },

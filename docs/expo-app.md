@@ -72,6 +72,106 @@ In terminal output, confirm:
 
 If it says development build, press `s` to switch, or restart with `--go`.
 
+## Physical iPhone Dev-Build Recovery Log (Executed on 2026-03-03)
+
+This section documents the exact work completed to move from "Runtime unreachable" on a physical iPhone to a working paired session.
+
+### 1. Switched from Expo Go path to iOS dev build
+
+Actions:
+
+1. Built and installed the iOS development build from `apps/mobile` with `npx expo run:ios --device`.
+2. Installed iOS native dependencies/pods required by the generated iOS workspace.
+
+User narrative:
+
+- Users are no longer blocked by Expo Go app/version constraints and can run the app against the project's actual native/runtime stack.
+
+### 2. Ensured Electron mobile gateway is actually running on LAN
+
+Actions:
+
+1. Wired mobile gateway lifecycle into Electron main startup/shutdown.
+2. Added `SessionManager` event-listener support needed by the gateway event bridge.
+3. Verified runtime health from both loopback and LAN:
+   - `curl http://127.0.0.1:7842/api/health`
+   - `curl http://192.168.4.29:7842/api/health`
+
+User narrative:
+
+- Users get a real reachable runtime endpoint from phone, instead of pairing against a port that is not serving mobile APIs.
+
+### 3. Kept Metro in dev-client mode on LAN and validated launch
+
+Actions:
+
+1. Started Metro with dev-client LAN URL (`exp+orchestra-mobile://...url=http://192.168.4.29:8081`).
+2. Launched installed app on device with `xcrun devicectl device process launch`.
+
+User narrative:
+
+- Users can open the installed Orchestra app and connect to the running bundle without manual URL juggling.
+
+### 4. Fixed runtime-host and recovery behavior in mobile app
+
+Actions (code-level):
+
+1. Added shared runtime host normalization/URL utilities:
+   - `apps/mobile/src/runtime-host.ts`
+2. Normalized persisted runtime host during auth hydrate/set:
+   - `apps/mobile/src/state/auth-store.ts`
+3. Updated onboarding host flow to validate host and only persist host after successful runtime health/pair-start:
+   - `apps/mobile/src/app/(onboarding)/find-runtime.tsx`
+4. Updated API/SSE clients to build URLs safely from normalized runtime origin:
+   - `apps/mobile/src/api/client.ts`
+   - `apps/mobile/src/api/sse-client.ts`
+5. Treated auth `403` as re-pair required (same class as expired auth):
+   - `apps/mobile/src/api/client.ts`
+6. Made "Re-pair Device" route deterministically to onboarding from both main and session screens:
+   - `apps/mobile/src/app/(main)/index.tsx`
+   - `apps/mobile/src/app/(main)/session/[sessionId].tsx`
+
+User narrative:
+
+- Users can recover from bad/stale host or auth states directly on phone instead of being trapped in repeated "Runtime unreachable" loops.
+
+### 5. Fixed dev-client runtime crash caused by dependency drift
+
+Actions:
+
+1. Identified `apps/mobile` resolving wrong React version (`18.3.1`) after local dependency churn.
+2. Restored React to the expected app version (`19.2.0`) and restarted Metro with cache clear.
+
+User narrative:
+
+- Users get a stable app launch path without Hermes startup crashes.
+
+### 6. Fixed pairing-code mismatch source of "invalid pairing code"
+
+Actions (code-level):
+
+1. Added pairing-session code to auth pairing state:
+   - `apps/mobile/src/state/auth-store.ts`
+2. Stored `pairStart.code` from the same server-issued pairing session:
+   - `apps/mobile/src/app/(onboarding)/find-runtime.tsx`
+3. Auto-submitted that exact session code on confirm screen:
+   - `apps/mobile/src/app/(onboarding)/confirm-pair.tsx`
+
+Why this was required:
+
+- Manual codes generated outside the phone's own `pairStart` session can never confirm that phone session (`pairingId` mismatch), even if the code itself is valid for a different session.
+
+User narrative:
+
+- Users no longer need to manually copy a separate pairing code source; pairing now completes reliably from the same flow that created the session.
+
+### 7. Verification outcomes
+
+1. iOS app installs and launches on the physical iPhone.
+2. Metro bundle loads over LAN.
+3. Runtime `/api/health` is reachable from LAN and loopback.
+4. Pairing flow now succeeds end-to-end from device onboarding.
+
 ## Scope
 
 ### In Scope (MVP)

@@ -5,18 +5,9 @@ import { SafeAreaView } from "react-native-safe-area-context";
 
 import { createRuntimeApiClient } from "@/api/runtime-client";
 import { Button, TextInput } from "@/components/ui";
+import { normalizeRuntimeHost } from "@/runtime-host";
 import { useAuthStore } from "@/state/auth-store";
 import { useTheme } from "@/theme/theme-provider";
-
-function normalizeHost(rawHost: string): string {
-  const trimmed = rawHost.trim();
-  if (trimmed.length === 0) {
-    return "";
-  }
-
-  const withProtocol = /^https?:\/\//i.test(trimmed) ? trimmed : `http://${trimmed}`;
-  return withProtocol.replace(/\/+$/, "");
-}
 
 function toUserMessage(error: unknown): string {
   if (error instanceof Error && error.message.trim().length > 0) {
@@ -111,20 +102,20 @@ export default function FindRuntimeScreen() {
       return;
     }
 
-    const host = normalizeHost(hostInput);
+    const host = normalizeRuntimeHost(hostInput);
     if (!host) {
       setPairingState({
         status: "error",
-        error: "Enter a runtime hostname or IP address.",
+        error: "Enter a valid runtime host (example: 192.168.1.42:7842).",
       });
       return;
     }
 
     setIsConnecting(true);
-    await setRuntimeHost(host);
     setPairingState({
       status: "starting",
       host,
+      code: null,
       error: null,
       pairingId: null,
       expiresAt: null,
@@ -134,10 +125,12 @@ export default function FindRuntimeScreen() {
       const client = createRuntimeApiClient(host);
       await client.health();
       const pairingStart = await client.pairStart();
+      await setRuntimeHost(host);
 
       setPairingState({
         status: "confirming",
         host,
+        code: pairingStart.code,
         pairingId: pairingStart.pairingId,
         expiresAt: pairingStart.expiresAt,
         error: null,

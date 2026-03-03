@@ -11,6 +11,8 @@ import type {
   WorkspaceDTO,
 } from "@craft-agent/mobile-contracts";
 
+import { buildRuntimeUrl, normalizeRuntimeHost } from "@/runtime-host";
+
 type HealthResponse = {
   status: string;
   version: string;
@@ -61,7 +63,7 @@ class ApiClient {
   private readonly authStore: ApiClientAuthStore;
 
   constructor(config: ApiClientConfig) {
-    this.baseUrl = config.baseUrl.replace(/\/+$/, "");
+    this.baseUrl = normalizeRuntimeHost(config.baseUrl) ?? config.baseUrl.replace(/\/+$/, "");
     this.authStore = config.authStore;
   }
 
@@ -208,9 +210,10 @@ class ApiClient {
     }
 
     let response: Response;
+    const url = buildRuntimeUrl(this.baseUrl, config.path);
 
     try {
-      response = await fetch(`${this.baseUrl}${config.path}`, {
+      response = await fetch(url, {
         method: config.method,
         headers: Object.keys(headers).length > 0 ? headers : undefined,
         body: config.body !== undefined ? JSON.stringify(config.body) : undefined,
@@ -231,6 +234,11 @@ class ApiClient {
         attemptedRefresh: true,
         tokenOverride: refreshedToken,
       });
+    }
+
+    if (response.status === 403 && config.auth) {
+      await this.authStore.triggerRePair();
+      throw new Error("Authentication expired. Please pair this device again.");
     }
 
     if (!response.ok) {

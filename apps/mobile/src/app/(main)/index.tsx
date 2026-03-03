@@ -515,6 +515,13 @@ export default function MainIndexScreen() {
     void fetchHomeData({ refreshing: true });
   }, [fetchHomeData]);
 
+  const handleRepairDevice = useCallback(() => {
+    void (async () => {
+      await triggerRePair();
+      router.replace("/(onboarding)/find-runtime");
+    })();
+  }, [router, triggerRePair]);
+
   const handleSelectWorkspace = useCallback(
     async (workspaceId: string) => {
       if (!client) {
@@ -917,7 +924,7 @@ export default function MainIndexScreen() {
           <Button onPress={() => handleRefresh()} variant="outline">
             Retry Connection
           </Button>
-          <Button onPress={() => void triggerRePair()} variant="ghost">
+          <Button onPress={() => handleRepairDevice()} variant="ghost">
             Re-pair Device
           </Button>
         </View>

@@ -1,6 +1,8 @@
 import { SESSION_EVENT_TYPES, type SessionEventDTO } from "@craft-agent/mobile-contracts";
 import EventSource from "react-native-sse";
 
+import { buildRuntimeUrl, normalizeRuntimeHost } from "@/runtime-host";
+
 const DEFAULT_RECONNECT_BACKOFF_MS = [1_000, 2_000, 4_000, 8_000, 30_000] as const;
 const DEFAULT_LIVENESS_TIMEOUT_MS = 45_000;
 
@@ -105,7 +107,7 @@ class SseClient {
   private livenessTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(config: SseClientConfig) {
-    this.baseUrl = config.baseUrl.replace(/\/+$/, "");
+    this.baseUrl = normalizeRuntimeHost(config.baseUrl) ?? config.baseUrl.replace(/\/+$/, "");
     this.authStore = config.authStore;
     this.cursorStore = config.cursorStore ?? createInMemorySseCursorStore();
     this.eventSourceFactory = config.eventSourceFactory ?? createDefaultEventSourceFactory();
@@ -254,7 +256,7 @@ class SseClient {
   }
 
   private getWorkspaceEventsUrl(workspaceId: string): string {
-    return `${this.baseUrl}/api/workspaces/${encodeURIComponent(workspaceId)}/events`;
+    return buildRuntimeUrl(this.baseUrl, `/api/workspaces/${encodeURIComponent(workspaceId)}/events`);
   }
 
   private isCurrent(generation: number, workspaceId: string): boolean {

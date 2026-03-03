@@ -443,4 +443,36 @@ describe("api client", () => {
       "API request failed (400 invalid_request): Invalid create session options",
     );
   });
+
+  it("normalizes legacy base URLs before issuing requests", async () => {
+    mockFetch.mockResolvedValue(
+      mockFetchResponse({
+        body: { status: "ok", version: "1.0.0" },
+      }),
+    );
+
+    const client = createApiClient({ baseUrl: "localhost:7842/api", authStore });
+    await client.health();
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      "http://localhost:7842/api/health",
+      expect.objectContaining({ method: "GET" }),
+    );
+  });
+
+  it("on 403 for authenticated requests, triggers re-pair and throws readable error", async () => {
+    mockFetch.mockResolvedValueOnce(
+      mockFetchResponse({
+        status: 403,
+        body: { code: "forbidden", message: "Token revoked" },
+      }),
+    );
+
+    const client = createApiClient({ baseUrl, authStore });
+
+    await expect(client.getWorkspaces()).rejects.toThrow(
+      "Authentication expired. Please pair this device again.",
+    );
+    expect(authStore.triggerRePair as jest.Mock).toHaveBeenCalledTimes(1);
+  });
 });

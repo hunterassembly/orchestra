@@ -32,6 +32,7 @@ export default function ConfirmPairScreen() {
   const setPairingState = useAuthStore((state) => state.setPairingState);
   const setTokens = useAuthStore((state) => state.setTokens);
   const [digits, setDigits] = useState<string[]>(Array(CODE_LENGTH).fill(""));
+  const [autoSubmittedCode, setAutoSubmittedCode] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [remainingMs, setRemainingMs] = useState(() =>
     pairing.expiresAt ? Math.max(0, pairing.expiresAt - Date.now()) : 0,
@@ -170,6 +171,21 @@ export default function ConfirmPairScreen() {
     }
   };
 
+  useEffect(() => {
+    const runtimeCode = pairing.code?.trim() ?? "";
+    if (runtimeCode.length !== CODE_LENGTH) {
+      return;
+    }
+
+    if (autoSubmittedCode === runtimeCode) {
+      return;
+    }
+
+    setDigits(runtimeCode.split(""));
+    setAutoSubmittedCode(runtimeCode);
+    void submitCode(runtimeCode);
+  }, [autoSubmittedCode, pairing.code]);
+
   const setDigitAt = (index: number, value: string) => {
     setDigits((previous) => {
       const next = [...previous];
@@ -225,7 +241,7 @@ export default function ConfirmPairScreen() {
     <SafeAreaView edges={["top", "bottom"]} style={styles.safeArea}>
       <View style={styles.container}>
         <Text style={styles.title}>Confirm Pairing</Text>
-        <Text style={styles.subtitle}>Enter the 6-digit code shown by your Orchestra runtime.</Text>
+        <Text style={styles.subtitle}>Confirming pairing with your Orchestra runtime.</Text>
         <Text style={styles.runtime}>{pairing.host ?? "No runtime selected"}</Text>
 
         <View style={styles.codeRow}>
