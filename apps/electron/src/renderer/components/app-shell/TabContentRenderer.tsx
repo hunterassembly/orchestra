@@ -225,9 +225,9 @@ function WorkflowTabContent({ tab }: { tab: WorkflowTab }) {
         <p className="mt-1 text-xs text-muted-foreground">
           Workflow dispatched to this session.
         </p>
-        <pre className="mt-3 whitespace-pre-wrap rounded-md bg-foreground/[0.03] p-3 text-xs text-foreground/80">
-          {tab.prompt}
-        </pre>
+        <p className="mt-3 text-xs text-muted-foreground">
+          Running in chat. See the main chat thread for live progress and results.
+        </p>
       </div>
     </div>
   )
