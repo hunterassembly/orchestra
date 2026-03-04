@@ -85,7 +85,7 @@ function formatTokenCount(tokens: number): string {
 
 /** Platform-specific modifier key for keyboard shortcuts */
 const cmdKey = isMac ? '⌘' : 'Ctrl'
-const PUSH_TO_TALK_HOLD_MS = 220
+const PUSH_TO_TALK_HOLD_MS = 350
 const PUSH_TO_TALK_RELEASE_DELAY_MS = 100
 
 /** Default rotating placeholders for onboarding/empty state */
@@ -541,6 +541,7 @@ export function FreeFormInput({
   const pushToTalkStopTimerRef = React.useRef<NodeJS.Timeout | null>(null)
   const pushToTalkPressedRef = React.useRef(false)
   const pushToTalkInterceptedRef = React.useRef(false)
+  const pushToTalkTriggeredRef = React.useRef(false)
   const mediaRecorderRef = React.useRef<MediaRecorder | null>(null)
   const mediaStreamRef = React.useRef<MediaStream | null>(null)
   const mediaChunksRef = React.useRef<Blob[]>([])
@@ -1303,6 +1304,7 @@ export function FreeFormInput({
       toast.error('Could not start microphone recording')
       pushToTalkPressedRef.current = false
       pushToTalkInterceptedRef.current = false
+      pushToTalkTriggeredRef.current = false
       if (pushToTalkTimerRef.current) {
         clearTimeout(pushToTalkTimerRef.current)
         pushToTalkTimerRef.current = null
@@ -1386,9 +1388,10 @@ export function FreeFormInput({
       pushToTalkStopTimerRef.current = null
     }
 
-    const wasDictating = isDictating || !!mediaRecorderRef.current
+    const wasDictating = isDictating || !!mediaRecorderRef.current || pushToTalkTriggeredRef.current
     pushToTalkPressedRef.current = false
     pushToTalkInterceptedRef.current = false
+    pushToTalkTriggeredRef.current = false
 
     event?.preventDefault()
 
@@ -1397,8 +1400,10 @@ export function FreeFormInput({
         void stopPushToTalkRecording()
         pushToTalkStopTimerRef.current = null
       }, PUSH_TO_TALK_RELEASE_DELAY_MS)
+    } else if (event) {
+      insertTextAtCursor(' ')
     }
-  }, [isDictating, stopPushToTalkRecording])
+  }, [isDictating, stopPushToTalkRecording, insertTextAtCursor])
 
   React.useEffect(() => {
     const handleWindowKeyUp = (event: KeyboardEvent) => {
@@ -1443,9 +1448,11 @@ export function FreeFormInput({
       }
       pushToTalkPressedRef.current = true
       pushToTalkInterceptedRef.current = true
+      pushToTalkTriggeredRef.current = false
       if (pushToTalkTimerRef.current) clearTimeout(pushToTalkTimerRef.current)
       pushToTalkTimerRef.current = setTimeout(() => {
         if (!pushToTalkPressedRef.current) return
+        pushToTalkTriggeredRef.current = true
         void startPushToTalkRecording()
       }, PUSH_TO_TALK_HOLD_MS)
       return
