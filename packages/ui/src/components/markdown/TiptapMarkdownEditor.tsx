@@ -12,6 +12,16 @@ import { cn } from '../../lib/utils'
 import 'katex/dist/katex.min.css'
 import './tiptap-editor.css'
 
+const BLOCK_DRAG_MIME = 'application/x-orchestra-note-block'
+const BLOCK_SELECTOR = '.tiptap-prose p, .tiptap-prose h1, .tiptap-prose h2, .tiptap-prose h3, .tiptap-prose ul, .tiptap-prose ol, .tiptap-prose blockquote, .tiptap-prose pre, .tiptap-prose hr, .tiptap-prose .tiptap-task-card'
+const DND_DEBUG = true
+
+function dndLog(...args: unknown[]) {
+  if (!DND_DEBUG) return
+  // eslint-disable-next-line no-console
+  console.log('[notes-dnd]', ...args)
+}
+
 function getMarkdown(editor: unknown): string {
   const markdownStorage = (editor as { storage?: { markdown?: MarkdownStorage } })?.storage?.markdown
   return markdownStorage?.getMarkdown() ?? ''
@@ -32,9 +42,16 @@ function getTopLevelNodeStartPos(doc: { forEach: (cb: (node: { nodeSize: number 
 
 function getBlockDomFromPoint(target: EventTarget | null): HTMLElement | null {
   if (!(target instanceof HTMLElement)) return null
-  return target.closest(
-    '.tiptap-prose p, .tiptap-prose h1, .tiptap-prose h2, .tiptap-prose h3, .tiptap-prose ul, .tiptap-prose ol, .tiptap-prose blockquote, .tiptap-prose pre, .tiptap-prose hr, .tiptap-prose .tiptap-task-card',
-  )
+  return target.closest(BLOCK_SELECTOR)
+}
+
+function getBlockDomAtViewportPoint(x: number, y: number): HTMLElement | null {
+  const elements = document.elementsFromPoint(x, y)
+  for (const element of elements) {
+    const block = getBlockDomFromPoint(element)
+    if (block) return block
+  }
+  return null
 }
 
 export interface TiptapMarkdownEditorProps {
@@ -77,6 +94,12 @@ export function TiptapMarkdownEditor({
   const [dropIndicatorY, setDropIndicatorY] = React.useState<number | null>(null)
   const wrapperRef = React.useRef<HTMLDivElement | null>(null)
   const draggingBlockPosRef = React.useRef<number | null>(null)
+  const dragHandleLatchRef = React.useRef(false)
+  const lastHoveredBlockRef = React.useRef<{ pos: number; top: number; height: number } | null>(null)
+  const manualDraggingRef = React.useRef(false)
+  const manualDragFromPosRef = React.useRef<number | null>(null)
+  const manualDropTargetRef = React.useRef<{ targetStart: number; insertAfter: boolean } | null>(null)
+  const lastManualTargetLogRef = React.useRef<string | null>(null)
 
   const filteredWikiSuggestions = React.useMemo(() => {
     const q = wikiFilter.trim().toLowerCase()
@@ -324,6 +347,32 @@ export function TiptapMarkdownEditor({
 
   const handleEditorMouseMove = React.useCallback((event: React.MouseEvent<HTMLDivElement>) => {
     if (!editor || !editable) return
+    if (dragHandleLatchRef.current) return
+
+    const wrapperRect = wrapperRef.current?.getBoundingClientRect()
+    if (wrapperRect && event.clientX <= wrapperRect.left + 40) {
+      // Pointer is in left gutter: keep current block, or resolve by vertical probe.
+      if (hoveredBlock) return
+      const probeX = wrapperRect.left + 56
+      const probeEl = getBlockDomAtViewportPoint(probeX, event.clientY)
+      if (!probeEl || !wrapperRef.current?.contains(probeEl)) {
+        if (lastHoveredBlockRef.current) setHoveredBlock(lastHoveredBlockRef.current)
+        return
+      }
+      const probePos = resolveBlockPosFromElement(probeEl)
+      if (probePos === null) return
+      const rect = probeEl.getBoundingClientRect()
+      const next = { pos: probePos, top: rect.top - wrapperRect.top, height: rect.height }
+      lastHoveredBlockRef.current = next
+      setHoveredBlock(next)
+      return
+    }
+
+    if (event.target instanceof HTMLElement && event.target.closest('.tiptap-drag-handle')) {
+      // Keep current hovered block while moving pointer onto the drag handle.
+      dragHandleLatchRef.current = true
+      return
+    }
     const blockEl = getBlockDomFromPoint(event.target)
     if (!blockEl || !wrapperRef.current?.contains(blockEl)) {
       setHoveredBlock(null)
@@ -334,24 +383,32 @@ export function TiptapMarkdownEditor({
       setHoveredBlock(null)
       return
     }
-    const wrapperRect = wrapperRef.current.getBoundingClientRect()
+    const nextWrapperRect = wrapperRef.current.getBoundingClientRect()
     const rect = blockEl.getBoundingClientRect()
-    setHoveredBlock({
+    const next = {
       pos,
-      top: rect.top - wrapperRect.top,
+      top: rect.top - nextWrapperRect.top,
       height: rect.height,
-    })
-  }, [editor, editable, resolveBlockPosFromElement])
+    }
+    lastHoveredBlockRef.current = next
+    setHoveredBlock(next)
+  }, [editor, editable, resolveBlockPosFromElement, hoveredBlock])
 
-  const handleEditorMouseLeave = React.useCallback(() => {
+  const handleEditorMouseLeave = React.useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+    const related = event.relatedTarget
+    if (related instanceof HTMLElement && related.closest('.tiptap-drag-handle')) return
+    if (dragHandleLatchRef.current) return
     setHoveredBlock(null)
   }, [])
 
   const onHandleDragStart = React.useCallback((event: React.DragEvent<HTMLButtonElement>) => {
     if (!editor || !hoveredBlock) return
+    dragHandleLatchRef.current = true
     draggingBlockPosRef.current = hoveredBlock.pos
     event.dataTransfer.effectAllowed = 'move'
-    event.dataTransfer.setData('text/plain', `block:${hoveredBlock.pos}`)
+    event.dataTransfer.setData(BLOCK_DRAG_MIME, String(hoveredBlock.pos))
+    // Keep plain text payload empty so browsers don't insert visible text on drop.
+    event.dataTransfer.setData('text/plain', '')
     const from = hoveredBlock.pos
     const node = editor.state.doc.nodeAt(from)
     if (!node) return
@@ -360,51 +417,71 @@ export function TiptapMarkdownEditor({
   }, [editor, hoveredBlock])
 
   const onEditorDragOver = React.useCallback((event: React.DragEvent<HTMLDivElement>) => {
-    if (!editor || draggingBlockPosRef.current === null) return
+    if (!editor) return
+    const hasBlockPayload = event.dataTransfer.types.includes(BLOCK_DRAG_MIME)
+    if (!hasBlockPayload && draggingBlockPosRef.current === null) return
     event.preventDefault()
-    const pos = editor.view.posAtCoords({ left: event.clientX, top: event.clientY })?.pos
-    if (typeof pos !== 'number') {
-      setDropIndicatorY(null)
+
+    const blockEl = getBlockDomAtViewportPoint(event.clientX, event.clientY)
+    if (!blockEl || !wrapperRef.current?.contains(blockEl)) {
+      const pos = editor.view.posAtCoords({ left: event.clientX, top: event.clientY })?.pos
+      if (typeof pos === 'number' && wrapperRef.current) {
+        const coords = editor.view.coordsAtPos(pos)
+        const wrapperRect = wrapperRef.current.getBoundingClientRect()
+        setDropIndicatorY(coords.top - wrapperRect.top)
+      } else {
+        setDropIndicatorY(null)
+      }
       return
     }
-    const targetStart = getTopLevelNodeStartPos(editor.state.doc, pos)
+
+    const targetStart = resolveBlockPosFromElement(blockEl)
     if (targetStart === null) {
       setDropIndicatorY(null)
       return
     }
-    const node = editor.state.doc.nodeAt(targetStart)
-    if (!node) {
-      setDropIndicatorY(null)
-      return
-    }
-    const coords = editor.view.coordsAtPos(Math.max(1, targetStart + 1))
-    const nodeMidY = coords.top + Math.max(12, node.nodeSize) / 2
-    const insertAfter = event.clientY > nodeMidY
-    setDropIndicatorY(insertAfter ? coords.bottom : coords.top)
-  }, [editor])
+
+    const rect = blockEl.getBoundingClientRect()
+    const wrapperRect = wrapperRef.current.getBoundingClientRect()
+    const insertAfter = event.clientY > (rect.top + rect.height / 2)
+    setDropIndicatorY((insertAfter ? rect.bottom : rect.top) - wrapperRect.top)
+  }, [editor, resolveBlockPosFromElement])
 
   const onEditorDrop = React.useCallback((event: React.DragEvent<HTMLDivElement>) => {
     if (!editor) return
-    const draggedFrom = draggingBlockPosRef.current
+    const draggedFromFromPayload = Number(event.dataTransfer.getData(BLOCK_DRAG_MIME))
+    const draggedFrom = Number.isFinite(draggedFromFromPayload) ? draggedFromFromPayload : draggingBlockPosRef.current
     draggingBlockPosRef.current = null
     setDropIndicatorY(null)
     if (draggedFrom === null) return
 
     event.preventDefault()
-    const posAtCoords = editor.view.posAtCoords({ left: event.clientX, top: event.clientY })?.pos
-    if (typeof posAtCoords !== 'number') return
+    event.stopPropagation()
+
+    const blockEl = getBlockDomAtViewportPoint(event.clientX, event.clientY)
 
     const state = editor.state
     const draggedNode = state.doc.nodeAt(draggedFrom)
     if (!draggedNode) return
 
-    const targetStart = getTopLevelNodeStartPos(state.doc, posAtCoords)
+    let targetStart: number | null = null
+    let insertAfterTarget = false
+
+    if (blockEl && wrapperRef.current?.contains(blockEl)) {
+      targetStart = resolveBlockPosFromElement(blockEl)
+      const rect = blockEl.getBoundingClientRect()
+      insertAfterTarget = event.clientY > (rect.top + rect.height / 2)
+    } else {
+      const fallbackPos = editor.view.posAtCoords({ left: event.clientX, top: event.clientY })?.pos
+      if (typeof fallbackPos === 'number') {
+        targetStart = getTopLevelNodeStartPos(state.doc, fallbackPos)
+      }
+    }
+
     if (targetStart === null) return
     const targetNode = state.doc.nodeAt(targetStart)
     if (!targetNode) return
 
-    const targetCoords = editor.view.coordsAtPos(Math.max(1, targetStart + 1))
-    const insertAfterTarget = event.clientY > ((targetCoords.top + targetCoords.bottom) / 2)
     let insertPos = insertAfterTarget ? targetStart + targetNode.nodeSize : targetStart
 
     if (insertPos >= draggedFrom && insertPos <= draggedFrom + draggedNode.nodeSize) {
@@ -415,12 +492,129 @@ export function TiptapMarkdownEditor({
     if (insertPos > draggedFrom) insertPos -= draggedNode.nodeSize
     tr = tr.insert(insertPos, draggedNode)
     editor.view.dispatch(tr.scrollIntoView())
-  }, [editor])
+  }, [editor, resolveBlockPosFromElement])
+
+  const onEditorDropCapture = React.useCallback((event: React.DragEvent<HTMLDivElement>) => {
+    // Intercept early so ProseMirror/browser don't insert plain-text payload.
+    if (!event.dataTransfer.types.includes(BLOCK_DRAG_MIME)) return
+    event.preventDefault()
+    // Do not stop propagation here — our onDrop handler needs to run to perform the move.
+  }, [])
 
   const onEditorDragEnd = React.useCallback(() => {
+    dragHandleLatchRef.current = false
     draggingBlockPosRef.current = null
     setDropIndicatorY(null)
   }, [])
+
+  const moveBlock = React.useCallback((draggedFrom: number, targetStart: number, insertAfterTarget: boolean) => {
+    if (!editor) return
+    const state = editor.state
+    const draggedNode = state.doc.nodeAt(draggedFrom)
+    const targetNode = state.doc.nodeAt(targetStart)
+    if (!draggedNode || !targetNode) {
+      dndLog('moveBlock abort: missing nodes', { draggedFrom, targetStart, hasDraggedNode: !!draggedNode, hasTargetNode: !!targetNode })
+      return
+    }
+
+    let insertPos = insertAfterTarget ? targetStart + targetNode.nodeSize : targetStart
+    if (insertPos >= draggedFrom && insertPos <= draggedFrom + draggedNode.nodeSize) {
+      dndLog('moveBlock noop: insertPos within dragged range', {
+        draggedFrom,
+        draggedTo: draggedFrom + draggedNode.nodeSize,
+        targetStart,
+        insertAfterTarget,
+        insertPos,
+      })
+      return
+    }
+
+    let tr = state.tr.delete(draggedFrom, draggedFrom + draggedNode.nodeSize)
+    if (insertPos > draggedFrom) insertPos -= draggedNode.nodeSize
+    tr = tr.insert(insertPos, draggedNode)
+    dndLog('moveBlock apply', {
+      draggedFrom,
+      targetStart,
+      insertAfterTarget,
+      finalInsertPos: insertPos,
+      draggedNodeSize: draggedNode.nodeSize,
+      targetNodeSize: targetNode.nodeSize,
+    })
+    editor.view.dispatch(tr.scrollIntoView())
+  }, [editor])
+
+  const handleManualDragMove = React.useCallback((event: MouseEvent) => {
+    if (!manualDraggingRef.current || !wrapperRef.current || !editor) return
+    const wrapperEl = wrapperRef.current
+    const wrapperRect = wrapperEl.getBoundingClientRect()
+    const blockEls = Array.from(wrapperEl.querySelectorAll(BLOCK_SELECTOR))
+      .filter((el): el is HTMLElement => el instanceof HTMLElement && el.offsetHeight > 0)
+
+    if (blockEls.length === 0) {
+      manualDropTargetRef.current = null
+      setDropIndicatorY(null)
+      return
+    }
+
+    let targetEl: HTMLElement | null = null
+    let insertAfter = false
+    for (const blockEl of blockEls) {
+      const rect = blockEl.getBoundingClientRect()
+      if (event.clientY <= rect.top + rect.height / 2) {
+        targetEl = blockEl
+        insertAfter = false
+        break
+      }
+    }
+    if (!targetEl) {
+      const last = blockEls[blockEls.length - 1]
+      if (!last) return
+      targetEl = last
+      insertAfter = true
+    }
+
+    const targetStart = resolveBlockPosFromElement(targetEl)
+    if (targetStart === null) return
+
+    const rect = targetEl.getBoundingClientRect()
+    manualDropTargetRef.current = { targetStart, insertAfter }
+    setDropIndicatorY((insertAfter ? rect.bottom : rect.top) - wrapperRect.top)
+
+    const signature = `${targetStart}:${insertAfter ? 'after' : 'before'}`
+    if (lastManualTargetLogRef.current !== signature) {
+      lastManualTargetLogRef.current = signature
+      dndLog('manualDrag target', { targetStart, insertAfter, clientY: event.clientY })
+    }
+  }, [editor, resolveBlockPosFromElement])
+
+  const handleManualDragEnd = React.useCallback(() => {
+    if (!manualDraggingRef.current) return
+    manualDraggingRef.current = false
+    dragHandleLatchRef.current = false
+    setDropIndicatorY(null)
+
+    const draggedFrom = manualDragFromPosRef.current
+    const target = manualDropTargetRef.current
+    manualDragFromPosRef.current = null
+    manualDropTargetRef.current = null
+    lastManualTargetLogRef.current = null
+
+    dndLog('manualDrag end', { draggedFrom, target })
+    if (draggedFrom === null || !target) {
+      dndLog('manualDrag abort: missing draggedFrom or target', { draggedFrom, target })
+      return
+    }
+    moveBlock(draggedFrom, target.targetStart, target.insertAfter)
+  }, [moveBlock])
+
+  React.useEffect(() => {
+    document.addEventListener('mousemove', handleManualDragMove)
+    document.addEventListener('mouseup', handleManualDragEnd)
+    return () => {
+      document.removeEventListener('mousemove', handleManualDragMove)
+      document.removeEventListener('mouseup', handleManualDragEnd)
+    }
+  }, [handleManualDragMove, handleManualDragEnd])
 
   const onEditorClick = React.useCallback((event: React.MouseEvent<HTMLDivElement>) => {
     if (!onWikiLinkNavigate) return
@@ -447,6 +641,7 @@ export function TiptapMarkdownEditor({
       onMouseMove={handleEditorMouseMove}
       onMouseLeave={handleEditorMouseLeave}
       onDragOver={onEditorDragOver}
+      onDropCapture={onEditorDropCapture}
       onDrop={onEditorDrop}
       onDragEnd={onEditorDragEnd}
       onClick={onEditorClick}
@@ -455,9 +650,22 @@ export function TiptapMarkdownEditor({
       {editable && hoveredBlock && (
         <button
           type="button"
-          draggable
+          draggable={false}
           className="tiptap-drag-handle"
           style={{ top: hoveredBlock.top + 2 }}
+          onMouseEnter={() => { dragHandleLatchRef.current = true }}
+          onMouseLeave={() => { dragHandleLatchRef.current = false }}
+          onMouseDown={(event) => {
+            event.preventDefault()
+            if (!hoveredBlock) return
+            dragHandleLatchRef.current = true
+            manualDraggingRef.current = true
+            manualDragFromPosRef.current = hoveredBlock.pos
+            manualDropTargetRef.current = { targetStart: hoveredBlock.pos, insertAfter: false }
+            lastManualTargetLogRef.current = null
+            dndLog('manualDrag start', { fromPos: hoveredBlock.pos, hoveredBlock })
+          }}
+          onMouseUp={() => { dragHandleLatchRef.current = false }}
           onDragStart={onHandleDragStart}
           title="Drag block"
         >

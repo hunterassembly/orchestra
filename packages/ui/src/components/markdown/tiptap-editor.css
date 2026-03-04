@@ -7,11 +7,14 @@
 
 .tiptap-editor {
   position: relative;
+  /* Extend hit area left to create a stable drag gutter without shifting content */
+  margin-left: -24px;
+  padding-left: 24px;
 }
 
 .tiptap-editor .tiptap-drag-handle {
   position: absolute;
-  left: -26px;
+  left: 2px;
   z-index: 40;
   width: 20px;
   height: 20px;
