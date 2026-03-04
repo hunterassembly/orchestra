@@ -14,15 +14,30 @@
 import { homedir } from 'os';
 import { join } from 'path';
 
+function isDevFlavorHint(value: string | undefined | null): boolean {
+  if (!value) return false;
+  return /orchestra[\s-]?dev|orchestradev|craft-agent\.dev/i.test(value);
+}
+
 function detectDefaultConfigDir(): string {
   const home = homedir();
+
+  if (isDevFlavorHint(process.env.CRAFT_APP_NAME) || isDevFlavorHint(process.env.CRAFT_DEEPLINK_SCHEME)) {
+    return join(home, '.craft-agent-dev');
+  }
 
   // If this is a packaged Electron "Orchestra Dev" app launch, default to
   // a separate config root so double-clicking the Dev app is isolated by default.
   const isElectron = typeof process !== 'undefined' && !!process.versions?.electron;
   if (isElectron) {
-    const execHint = `${process.execPath ?? ''} ${process.argv0 ?? ''}`.toLowerCase();
-    if (execHint.includes('orchestra dev') || execHint.includes('orchestradev')) {
+    const execHint = [
+      process.execPath ?? '',
+      process.argv0 ?? '',
+      process.argv?.join(' ') ?? '',
+      process.cwd?.() ?? '',
+      process.resourcesPath ?? '',
+    ].join(' ');
+    if (isDevFlavorHint(execHint)) {
       return join(home, '.craft-agent-dev');
     }
   }

@@ -148,6 +148,31 @@ registerPiModelResolver((piAuthProvider) =>
 
 const APP_DISPLAY_NAME = process.env.CRAFT_APP_NAME || app.getName() || 'Orchestra'
 
+function isDevFlavorHint(value: string): boolean {
+  return /orchestra[\s-]?dev|orchestradev|craft-agent\.dev/i.test(value)
+}
+
+function resolveConfigRoot(appName: string): string {
+  if (process.env.CRAFT_CONFIG_DIR) return process.env.CRAFT_CONFIG_DIR
+  const hint = [
+    appName,
+    process.env.CRAFT_DEEPLINK_SCHEME ?? '',
+    process.execPath ?? '',
+    process.argv0 ?? '',
+    process.argv.join(' '),
+    process.resourcesPath ?? '',
+  ].join(' ')
+  return isDevFlavorHint(hint) ? join(homedir(), '.craft-agent-dev') : join(homedir(), '.craft-agent')
+}
+
+function applyIsolatedElectronPaths(configRoot: string): void {
+  // Keep per-app Chromium/Electron state isolated (singleton lock, caches, cookies, etc.)
+  // so Orchestra and Orchestra Dev can run side-by-side without stomping each other.
+  app.setPath('userData', join(configRoot, 'electron-userdata'))
+  app.setPath('sessionData', join(configRoot, 'electron-session-data'))
+  app.setPath('logs', join(configRoot, 'logs'))
+}
+
 function resolveDefaultDeepLinkScheme(appName: string): string {
   const normalized = appName.toLowerCase()
   if (normalized.includes('dev')) return 'orchestradev'
@@ -157,6 +182,8 @@ function resolveDefaultDeepLinkScheme(appName: string): string {
 // Custom URL scheme for deeplinks (e.g., orchestra://auth-complete)
 // Supports multi-instance dev and dev/prod side-by-side installs.
 const DEEPLINK_SCHEME = process.env.CRAFT_DEEPLINK_SCHEME || resolveDefaultDeepLinkScheme(APP_DISPLAY_NAME)
+process.env.CRAFT_CONFIG_DIR = resolveConfigRoot(APP_DISPLAY_NAME)
+applyIsolatedElectronPaths(process.env.CRAFT_CONFIG_DIR)
 
 let windowManager: WindowManager | null = null
 let sessionManager: SessionManager | null = null

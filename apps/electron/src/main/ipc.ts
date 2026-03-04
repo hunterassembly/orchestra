@@ -13,7 +13,7 @@ import { registerOnboardingHandlers } from './onboarding'
 import { IPC_CHANNELS, type FileAttachment, type StoredAttachment, type SendMessageOptions, type LlmConnectionSetup, type SkillFile, type BrowserPaneCreateOptions, type BrowserEmptyStateLaunchPayload } from '../shared/types'
 import { readFileAttachment, perf, validateImageForClaudeAPI, IMAGE_LIMITS } from '@craft-agent/shared/utils'
 import { safeJsonParse } from '@craft-agent/shared/utils/files'
-import { getPreferencesPath, getSessionDraft, setSessionDraft, deleteSessionDraft, getAllSessionDrafts, getWorkspaceByNameOrId, addWorkspace, setActiveWorkspace, loadStoredConfig, saveConfig, type Workspace, getLlmConnections, getLlmConnection, addLlmConnection, updateLlmConnection, deleteLlmConnection, getDefaultLlmConnection, setDefaultLlmConnection, touchLlmConnection, isCompatProvider, isAnthropicProvider, getDefaultModelsForConnection, getDefaultModelForConnection, type LlmConnection, type LlmConnectionWithStatus, getGitBashPath, setGitBashPath, clearGitBashPath } from '@craft-agent/shared/config'
+import { CONFIG_DIR, getPreferencesPath, getSessionDraft, setSessionDraft, deleteSessionDraft, getAllSessionDrafts, getWorkspaceByNameOrId, addWorkspace, setActiveWorkspace, loadStoredConfig, saveConfig, type Workspace, getLlmConnections, getLlmConnection, addLlmConnection, updateLlmConnection, deleteLlmConnection, getDefaultLlmConnection, setDefaultLlmConnection, touchLlmConnection, isCompatProvider, isAnthropicProvider, getDefaultModelsForConnection, getDefaultModelForConnection, type LlmConnection, type LlmConnectionWithStatus, getGitBashPath, setGitBashPath, clearGitBashPath } from '@craft-agent/shared/config'
 import { getSessionAttachmentsPath, validateSessionId } from '@craft-agent/shared/sessions'
 import { loadWorkspaceSources, getSourcesBySlugs, type LoadedSource } from '@craft-agent/shared/sources'
 import { isValidThinkingLevel } from '@craft-agent/shared/agent/thinking-levels'
@@ -190,7 +190,7 @@ export function registerIpcHandlers(sessionManager: SessionManager, windowManage
 
   // Check if a workspace slug already exists (for validation before creation)
   ipcMain.handle(IPC_CHANNELS.CHECK_WORKSPACE_SLUG, async (_event, slug: string) => {
-    const defaultWorkspacesDir = join(homedir(), '.craft-agent', 'workspaces')
+    const defaultWorkspacesDir = join(CONFIG_DIR, 'workspaces')
     const workspacePath = join(defaultWorkspacesDir, slug)
     const exists = existsSync(workspacePath)
     return { exists, path: workspacePath }
@@ -1495,7 +1495,7 @@ export function registerIpcHandlers(sessionManager: SessionManager, windowManage
       }
 
       // Delete the config file
-      const configPath = join(homedir(), '.craft-agent', 'config.json')
+      const configPath = join(CONFIG_DIR, 'config.json')
       await unlink(configPath).catch(() => {
         // Ignore if file doesn't exist
       })
@@ -3350,6 +3350,35 @@ export function registerIpcHandlers(sessionManager: SessionManager, windowManage
       // Small enough, write as-is
       writeFileSync(absolutePath, buffer)
     }
+  })
+
+  // Generic workspace text writing (markdown vault, local notes, etc.)
+  ipcMain.handle(IPC_CHANNELS.WORKSPACE_WRITE_TEXT, async (_event, workspaceId: string, relativePath: string, content: string) => {
+    const workspace = getWorkspaceByNameOrId(workspaceId)
+    if (!workspace) throw new Error('Workspace not found')
+
+    const { mkdir, writeFile } = await import('fs/promises')
+    const { join, normalize, dirname } = await import('path')
+
+    if (relativePath.includes('..')) {
+      throw new Error('Invalid path: directory traversal not allowed')
+    }
+
+    const normalizedRelativePath = relativePath.replace(/\\/g, '/').replace(/^\/+/, '')
+    const absolutePath = normalize(join(workspace.rootPath, normalizedRelativePath))
+
+    // Double-check the resolved path is still within workspace
+    if (!absolutePath.startsWith(workspace.rootPath)) {
+      throw new Error('Invalid path: outside workspace directory')
+    }
+
+    const lower = normalizedRelativePath.toLowerCase()
+    if (!(lower.endsWith('.md') || lower.endsWith('.markdown') || lower.endsWith('.txt'))) {
+      throw new Error('Invalid file type: only .md, .markdown, and .txt are allowed')
+    }
+
+    await mkdir(dirname(absolutePath), { recursive: true })
+    await writeFile(absolutePath, content ?? '', 'utf-8')
   })
 
   // Register onboarding handlers
