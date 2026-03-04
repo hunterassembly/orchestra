@@ -60,9 +60,12 @@ export function ChangedFilesList({ rootPath, onEntriesChange }: ChangedFilesList
   const [entries, setEntries] = useState<GitStatusEntry[]>([])
   const [isLoading, setIsLoading] = useState(false)
   const mountedRef = useRef(true)
+  const inFlightRef = useRef(false)
 
   const loadStatus = useCallback(async () => {
     if (!rootPath) return
+    if (inFlightRef.current) return
+    inFlightRef.current = true
     setIsLoading(true)
     try {
       const result = await window.electronAPI.getGitStatus(rootPath)
@@ -77,6 +80,7 @@ export function ChangedFilesList({ rootPath, onEntriesChange }: ChangedFilesList
         onEntriesChange?.([])
       }
     } finally {
+      inFlightRef.current = false
       if (mountedRef.current) setIsLoading(false)
     }
   }, [rootPath, onEntriesChange])
@@ -96,6 +100,32 @@ export function ChangedFilesList({ rootPath, onEntriesChange }: ChangedFilesList
     return () => {
       mountedRef.current = false
       unsubscribe()
+    }
+  }, [rootPath, loadStatus])
+
+  // Poll git status for real-time updates (edits, git add/commit, branch operations)
+  // so the Changes tab reflects untracked/modified files and clears right after commit.
+  useEffect(() => {
+    if (!rootPath) return
+
+    const interval = window.setInterval(() => {
+      if (mountedRef.current) void loadStatus()
+    }, 1200)
+
+    const handleFocus = () => {
+      if (mountedRef.current) void loadStatus()
+    }
+    const handleVisibility = () => {
+      if (!document.hidden && mountedRef.current) void loadStatus()
+    }
+
+    window.addEventListener('focus', handleFocus)
+    document.addEventListener('visibilitychange', handleVisibility)
+
+    return () => {
+      window.clearInterval(interval)
+      window.removeEventListener('focus', handleFocus)
+      document.removeEventListener('visibilitychange', handleVisibility)
     }
   }, [rootPath, loadStatus])
 
