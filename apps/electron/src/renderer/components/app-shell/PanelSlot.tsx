@@ -38,6 +38,8 @@ interface PanelSlotProps {
   proportion: number
   /** Optional sash element rendered before this panel */
   sash?: React.ReactNode
+  /** Optional global vault root path for notes/tasks storage */
+  vaultRootPath?: string | null
 }
 
 export function PanelSlot({
@@ -49,6 +51,7 @@ export function PanelSlot({
   isAtRightEdge,
   proportion,
   sash,
+  vaultRootPath = null,
 }: PanelSlotProps) {
   const closePanel = useSetAtom(closePanelAtom)
   const setFocusedPanel = useSetAtom(focusedPanelIdAtom)
@@ -132,6 +135,7 @@ export function PanelSlot({
             <MainContentPanel
               navStateOverride={navState}
               isSidebarAndNavigatorHidden={isSidebarAndNavigatorHidden}
+              vaultRootPath={vaultRootPath}
             />
           </AppShellProvider>
         </div>

@@ -915,40 +915,44 @@ export function WorkspaceFilesPanel({ sessionId, closeButton }: WorkspaceFilesPa
             </div>
             <div className="flex-1 min-h-0 grid grid-rows-[1fr_auto]">
               <div className="min-h-0 overflow-auto px-3 py-2">
-                {selectedNotePath ? (
-                  <TiptapMarkdownEditor
-                    content={selectedNoteContent}
-                    onUpdate={saveVaultNote}
-                    placeholder="Write your note… Use [[Note Title]] for links."
-                    className="h-full"
-                  />
-                ) : (
-                  <div className="h-full flex items-center justify-center text-xs text-muted-foreground">
-                    Create or select a note from the vault.
-                  </div>
-                )}
+                <div className="mx-auto w-full max-w-[806px] h-full">
+                  {selectedNotePath ? (
+                    <TiptapMarkdownEditor
+                      content={selectedNoteContent}
+                      onUpdate={saveVaultNote}
+                      placeholder="Write your note… Use [[Note Title]] for links."
+                      className="h-full"
+                    />
+                  ) : (
+                    <div className="h-full flex items-center justify-center text-xs text-muted-foreground">
+                      Create or select a note from the vault.
+                    </div>
+                  )}
+                </div>
               </div>
               <div className="border-t border-border/40 px-3 py-2">
-                <div className="flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground mb-1.5">
-                  <Network className="h-3.5 w-3.5" />
-                  Knowledge Graph
-                </div>
-                <div className="text-xs text-muted-foreground">
-                  {vaultNotes.length} notes • {incomingBacklinks.length} backlinks into this note
-                </div>
-                {incomingBacklinks.length > 0 && (
-                  <div className="mt-1.5 flex flex-wrap gap-1">
-                    {incomingBacklinks.slice(0, 8).map((note) => (
-                      <button
-                        key={note.path}
-                        onClick={() => setSelectedNotePath(note.path)}
-                        className="text-[10px] px-1.5 py-0.5 rounded bg-muted hover:bg-muted/80 text-foreground/80"
-                      >
-                        {note.title}
-                      </button>
-                    ))}
+                <div className="mx-auto w-full max-w-[806px]">
+                  <div className="flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground mb-1.5">
+                    <Network className="h-3.5 w-3.5" />
+                    Knowledge Graph
                   </div>
-                )}
+                  <div className="text-xs text-muted-foreground">
+                    {vaultNotes.length} notes • {incomingBacklinks.length} backlinks into this note
+                  </div>
+                  {incomingBacklinks.length > 0 && (
+                    <div className="mt-1.5 flex flex-wrap gap-1">
+                      {incomingBacklinks.slice(0, 8).map((note) => (
+                        <button
+                          key={note.path}
+                          onClick={() => setSelectedNotePath(note.path)}
+                          className="text-[10px] px-1.5 py-0.5 rounded bg-muted hover:bg-muted/80 text-foreground/80"
+                        >
+                          {note.title}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
           </div>

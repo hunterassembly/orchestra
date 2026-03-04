@@ -7,6 +7,7 @@ import type { VaultNote } from './VaultNotesTypes'
 export interface VaultNotesListPanelProps {
   workspaceId: string | null
   workspaceRootPath: string | null
+  vaultRootPath?: string | null
   selectedNotePath: string | null
   onSelectNote: (notePath: string) => void
 }
@@ -14,14 +15,34 @@ export interface VaultNotesListPanelProps {
 export function VaultNotesListPanel({
   workspaceId,
   workspaceRootPath,
+  vaultRootPath = null,
   selectedNotePath,
   onSelectNote,
 }: VaultNotesListPanelProps) {
   const [notes, setNotes] = React.useState<VaultNote[]>([])
+  const effectiveRootPath = React.useMemo(() => vaultRootPath || workspaceRootPath, [vaultRootPath, workspaceRootPath])
+  const notesBasePath = React.useMemo(() => {
+    if (!effectiveRootPath) return null
+    return vaultRootPath
+      ? effectiveRootPath.replace(/\/$/, '')
+      : `${effectiveRootPath.replace(/\/$/, '')}/notes`
+  }, [effectiveRootPath, vaultRootPath])
   const notesRootPath = React.useMemo(() => {
-    if (!workspaceRootPath) return null
-    return `${workspaceRootPath.replace(/\/$/, '')}/notes`
-  }, [workspaceRootPath])
+    return notesBasePath
+  }, [notesBasePath])
+  const toRelativePath = React.useCallback((absolutePath: string): string => {
+    if (!effectiveRootPath) return absolutePath
+    const normalizedRoot = effectiveRootPath.replace(/\/+$/, '')
+    const normalizedPath = absolutePath.replace(/\\/g, '/')
+    const rootWithSlash = `${normalizedRoot}/`
+    if (normalizedPath.startsWith(rootWithSlash)) {
+      return normalizedPath.slice(rootWithSlash.length)
+    }
+    if (normalizedPath.startsWith(normalizedRoot)) {
+      return normalizedPath.slice(normalizedRoot.length).replace(/^\/+/, '')
+    }
+    return absolutePath
+  }, [effectiveRootPath])
 
   const listMarkdownNotes = React.useCallback(async (dirPath: string): Promise<VaultNote[]> => {
     const entries = await window.electronAPI.getWorkspaceFiles(dirPath)
@@ -29,9 +50,7 @@ export function VaultNotesListPanel({
       if (entry.type === 'directory') return listMarkdownNotes(entry.path)
       const lower = entry.name.toLowerCase()
       if (!lower.endsWith('.md') && !lower.endsWith('.markdown')) return []
-      const relativePath = workspaceRootPath
-        ? entry.path.replace(`${workspaceRootPath}/`, '')
-        : entry.path
+      const relativePath = toRelativePath(entry.path)
       return [{
         id: entry.path,
         path: entry.path,
@@ -40,7 +59,7 @@ export function VaultNotesListPanel({
       }]
     }))
     return nested.flat()
-  }, [workspaceRootPath])
+  }, [toRelativePath])
 
   const loadNotes = React.useCallback(async () => {
     if (!notesRootPath) {
@@ -61,13 +80,19 @@ export function VaultNotesListPanel({
   }, [loadNotes])
 
   const createNewNote = React.useCallback(async () => {
-    if (!workspaceId || !workspaceRootPath) return
+    if (!effectiveRootPath) return
     const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-')
     const fileName = `note-${stamp}.md`
-    const relativePath = `notes/${fileName}`
+    const relativePath = vaultRootPath ? fileName : `notes/${fileName}`
     const initial = `# ${fileName.replace(/\.md$/i, '')}\n\n`
     try {
-      await window.electronAPI.writeWorkspaceText(workspaceId, relativePath, initial)
+      if (vaultRootPath) {
+        await window.electronAPI.writeVaultText(vaultRootPath, relativePath, initial)
+      } else if (workspaceId) {
+        await window.electronAPI.writeWorkspaceText(workspaceId, relativePath, initial)
+      } else {
+        throw new Error('Workspace not available for note creation')
+      }
       await loadNotes()
       onSelectNote(relativePath)
       toast.success('Created new note')
@@ -75,7 +100,7 @@ export function VaultNotesListPanel({
       const message = error instanceof Error ? error.message : 'Unable to create note'
       toast.error(message)
     }
-  }, [workspaceId, workspaceRootPath, loadNotes, onSelectNote])
+  }, [workspaceId, effectiveRootPath, vaultRootPath, loadNotes, onSelectNote])
 
   return (
     <div className="h-full flex flex-col min-h-0">
@@ -116,4 +141,3 @@ export function VaultNotesListPanel({
     </div>
   )
 }
-

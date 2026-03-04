@@ -850,6 +850,11 @@ export const IPC_CHANNELS = {
   WORKSPACE_WRITE_IMAGE: 'workspace:writeImage',
   // Generic workspace markdown/text writing (for local vault notes)
   WORKSPACE_WRITE_TEXT: 'workspace:writeText',
+  WORKSPACE_RENAME_TEXT: 'workspace:renameText',
+  // Global vault markdown/text writing (for preferences-selected vault root)
+  VAULT_READ_TEXT: 'vault:readText',
+  VAULT_WRITE_TEXT: 'vault:writeText',
+  VAULT_RENAME_TEXT: 'vault:renameText',
 
   // Workspace settings (per-workspace configuration)
   WORKSPACE_SETTINGS_GET: 'workspaceSettings:get',
@@ -1247,6 +1252,13 @@ export interface ElectronAPI {
   writeWorkspaceImage(workspaceId: string, relativePath: string, base64: string, mimeType: string): Promise<void>
   // Generic workspace text writing (for markdown notes/vault files)
   writeWorkspaceText(workspaceId: string, relativePath: string, content: string): Promise<void>
+  // Rename/move a workspace markdown/text file; returns the final relative path used
+  renameWorkspaceText(workspaceId: string, oldRelativePath: string, newRelativePath: string): Promise<string>
+  // Generic vault text writing using an absolute vault root path
+  readVaultText(vaultRootPath: string, relativePath: string): Promise<string>
+  writeVaultText(vaultRootPath: string, relativePath: string, content: string): Promise<void>
+  // Rename/move a vault markdown/text file; returns the final relative path used
+  renameVaultText(vaultRootPath: string, oldRelativePath: string, newRelativePath: string): Promise<string>
 
   // Tool icon mappings (for Appearance settings page)
   getToolIconMappings(): Promise<ToolIconMapping[]>

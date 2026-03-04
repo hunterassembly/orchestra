@@ -322,6 +322,14 @@ const api: ElectronAPI = {
   // Generic workspace text writing (for local markdown vault)
   writeWorkspaceText: (workspaceId: string, relativePath: string, content: string) =>
     ipcRenderer.invoke(IPC_CHANNELS.WORKSPACE_WRITE_TEXT, workspaceId, relativePath, content),
+  renameWorkspaceText: (workspaceId: string, oldRelativePath: string, newRelativePath: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.WORKSPACE_RENAME_TEXT, workspaceId, oldRelativePath, newRelativePath),
+  readVaultText: (vaultRootPath: string, relativePath: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.VAULT_READ_TEXT, vaultRootPath, relativePath),
+  writeVaultText: (vaultRootPath: string, relativePath: string, content: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.VAULT_WRITE_TEXT, vaultRootPath, relativePath, content),
+  renameVaultText: (vaultRootPath: string, oldRelativePath: string, newRelativePath: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.VAULT_RENAME_TEXT, vaultRootPath, oldRelativePath, newRelativePath),
 
   // Sources change listener (live updates when sources are added/removed)
   onSourcesChanged: (callback: (workspaceId: string, sources: import('@craft-agent/shared/sources').LoadedSource[]) => void) => {

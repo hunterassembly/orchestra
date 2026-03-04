@@ -47,6 +47,10 @@ import { VaultNoteEditorPanel } from './VaultNoteEditorPanel'
 export interface MainContentPanelProps {
   /** Whether both sidebar and navigator are hidden (focus mode / CMD+.) */
   isSidebarAndNavigatorHidden?: boolean
+  /** Back-channel callback when a note write completes; used to refresh task index panels. */
+  onNoteSaved?: () => void
+  /** Optional global vault root path for notes/tasks storage (from preferences). */
+  vaultRootPath?: string | null
   /** Optional className for the container */
   className?: string
   /**
@@ -59,6 +63,8 @@ export interface MainContentPanelProps {
 
 export function MainContentPanel({
   isSidebarAndNavigatorHidden = false,
+  onNoteSaved,
+  vaultRootPath = null,
   className,
   navStateOverride,
 }: MainContentPanelProps) {
@@ -302,7 +308,7 @@ export function MainContentPanel({
   if (isNotesNavigation(navState)) {
     return wrapWithStoplight(
       <Panel variant="grow" className={className}>
-        <VaultNoteEditorPanel notePath={navState.details?.notePath ?? null} />
+        <VaultNoteEditorPanel notePath={navState.details?.notePath ?? null} onNoteSaved={onNoteSaved} vaultRootPath={vaultRootPath} />
       </Panel>
     )
   }

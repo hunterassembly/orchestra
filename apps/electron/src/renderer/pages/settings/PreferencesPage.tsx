@@ -21,6 +21,7 @@ import {
   SettingsInput,
   SettingsTextarea,
 } from '@/components/settings'
+import { Button } from '@/components/ui/button'
 import { EditPopover, EditButton, getEditConfig } from '@/components/ui/EditPopover'
 import type { DetailsPageMeta } from '@/lib/navigation-registry'
 
@@ -35,6 +36,7 @@ interface PreferencesFormState {
   language: string
   city: string
   country: string
+  vaultPath: string
   notes: string
 }
 
@@ -44,6 +46,7 @@ const emptyFormState: PreferencesFormState = {
   language: '',
   city: '',
   country: '',
+  vaultPath: '',
   notes: '',
 }
 
@@ -57,6 +60,7 @@ function parsePreferences(json: string): PreferencesFormState {
       language: prefs.language || '',
       city: prefs.location?.city || '',
       country: prefs.location?.country || '',
+      vaultPath: prefs.vault?.path || '',
       notes: prefs.notes || '',
     }
   } catch {
@@ -77,6 +81,11 @@ function serializePreferences(state: PreferencesFormState): string {
     if (state.city) location.city = state.city
     if (state.country) location.country = state.country
     prefs.location = location
+  }
+
+  const normalizedVaultPath = state.vaultPath.trim()
+  if (normalizedVaultPath) {
+    prefs.vault = { path: normalizedVaultPath }
   }
 
   if (state.notes) prefs.notes = state.notes
@@ -180,6 +189,33 @@ export default function PreferencesPage() {
     setFormState(prev => ({ ...prev, [field]: value }))
   }, [])
 
+  const persistNow = useCallback(async (nextState: PreferencesFormState) => {
+    try {
+      const json = serializePreferences(nextState)
+      const result = await window.electronAPI.writePreferences(json)
+      if (result.success) {
+        lastSavedRef.current = json
+      } else {
+        console.error('Failed to save preferences:', result.error)
+      }
+    } catch (err) {
+      console.error('Failed to save preferences:', err)
+    }
+  }, [])
+
+  const handleSelectVaultFolder = useCallback(async () => {
+    try {
+      const selectedPath = await window.electronAPI.openFolderDialog()
+      if (selectedPath) {
+        const nextState = { ...formStateRef.current, vaultPath: selectedPath }
+        setFormState(nextState)
+        await persistNow(nextState)
+      }
+    } catch (error) {
+      console.error('Failed to select vault folder:', error)
+    }
+  }, [persistNow])
+
   if (isLoading) {
     return (
       <div className="h-full flex items-center justify-center">
@@ -248,6 +284,44 @@ export default function PreferencesPage() {
                 onChange={(v) => updateField('country', v)}
                 placeholder="e.g., USA"
                 inCard
+              />
+            </SettingsCard>
+          </SettingsSection>
+
+          {/* Vault */}
+          <SettingsSection
+            title="Vault"
+            description="Choose a global folder for notes and tasks, independent from code workspaces."
+          >
+            <SettingsCard divided={false}>
+              <SettingsInput
+                label="Vault Folder"
+                description="Orchestra stores notes and tasks in this folder (uses /notes inside it)."
+                value={formState.vaultPath}
+                onChange={(v) => updateField('vaultPath', v)}
+                placeholder="Select a folder for your global vault"
+                inCard
+                action={(
+                  <div className="flex items-center gap-2">
+                    <Button type="button" size="sm" variant="outline" onClick={handleSelectVaultFolder}>
+                      Browse
+                    </Button>
+                    {formState.vaultPath && (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        onClick={async () => {
+                          const nextState = { ...formStateRef.current, vaultPath: '' }
+                          setFormState(nextState)
+                          await persistNow(nextState)
+                        }}
+                      >
+                        Clear
+                      </Button>
+                    )}
+                  </div>
+                )}
               />
             </SettingsCard>
           </SettingsSection>

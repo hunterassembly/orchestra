@@ -191,3 +191,144 @@
   margin: 0.5rem 0;
   padding: 0.5rem 0;
 }
+
+/* ── Rich task card ── */
+.tiptap-editor .tiptap-task-card {
+  border: 1px solid color-mix(in oklch, var(--foreground) 14%, transparent);
+  background: color-mix(in oklch, var(--foreground) 2%, transparent);
+  border-radius: 10px;
+  padding: 10px;
+  margin: 0.75rem 0;
+}
+
+.tiptap-editor .tiptap-task-card__header {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.tiptap-editor .tiptap-task-card__title {
+  width: 100%;
+  border: none;
+  background: transparent;
+  font-weight: 650;
+  font-size: 0.95rem;
+  color: var(--foreground);
+  outline: none;
+}
+
+.tiptap-editor .tiptap-task-card__status {
+  border: 1px solid color-mix(in oklch, var(--foreground) 16%, transparent);
+  background: color-mix(in oklch, var(--foreground) 4%, transparent);
+  color: var(--foreground);
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-size: 0.75rem;
+}
+
+.tiptap-editor .tiptap-task-card__meta {
+  margin-top: 8px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.tiptap-editor .tiptap-task-card__meta-item {
+  display: grid;
+  gap: 4px;
+  font-size: 0.7rem;
+  color: color-mix(in oklch, var(--foreground) 65%, transparent);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.tiptap-editor .tiptap-task-card__meta-item input {
+  border: 1px solid color-mix(in oklch, var(--foreground) 14%, transparent);
+  background: color-mix(in oklch, var(--foreground) 3%, transparent);
+  border-radius: 6px;
+  padding: 4px 6px;
+  color: var(--foreground);
+  font-size: 0.8rem;
+}
+
+.tiptap-editor .tiptap-task-card__description-label {
+  margin-top: 8px;
+  margin-bottom: 4px;
+  font-size: 0.7rem;
+  color: color-mix(in oklch, var(--foreground) 65%, transparent);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.tiptap-editor .tiptap-task-card__description {
+  border: 1px dashed color-mix(in oklch, var(--foreground) 14%, transparent);
+  border-radius: 8px;
+  padding: 8px;
+  min-height: 40px;
+}
+
+.tiptap-editor .tiptap-task-card__description > :first-child {
+  margin-top: 0;
+}
+
+.tiptap-editor .tiptap-task-card__description > :last-child {
+  margin-bottom: 0;
+}
+
+/* ── Inline slash command palette ── */
+.tiptap-editor .tiptap-slash-menu {
+  position: fixed;
+  z-index: 1200;
+  min-width: 240px;
+  max-width: 300px;
+  border-radius: 8px;
+  border: 1px solid color-mix(in oklch, var(--foreground) 12%, transparent);
+  background: var(--background);
+  color: var(--foreground);
+  box-shadow: 0 8px 30px color-mix(in oklch, var(--foreground) 14%, transparent);
+  overflow: hidden;
+}
+
+.tiptap-editor .tiptap-slash-menu__section {
+  padding: 6px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  color: color-mix(in oklch, var(--foreground) 70%, transparent);
+  border-bottom: 1px solid color-mix(in oklch, var(--foreground) 10%, transparent);
+}
+
+.tiptap-editor .tiptap-slash-menu__item {
+  width: 100%;
+  display: grid;
+  grid-template-columns: auto auto 1fr auto;
+  align-items: center;
+  gap: 8px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  padding: 8px 10px;
+  cursor: pointer;
+}
+
+.tiptap-editor .tiptap-slash-menu__item:hover {
+  background: color-mix(in oklch, var(--foreground) 5%, transparent);
+}
+
+.tiptap-editor .tiptap-slash-menu__kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1px 5px;
+  border-radius: 999px;
+  font-size: 10px;
+  color: color-mix(in oklch, var(--foreground) 75%, transparent);
+  background: color-mix(in oklch, var(--foreground) 8%, transparent);
+}
+
+.tiptap-editor .tiptap-slash-menu__hint {
+  padding: 6px 10px 8px;
+  font-size: 10px;
+  color: color-mix(in oklch, var(--foreground) 65%, transparent);
+}

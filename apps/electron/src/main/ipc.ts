@@ -3381,6 +3381,169 @@ export function registerIpcHandlers(sessionManager: SessionManager, windowManage
     await writeFile(absolutePath, content ?? '', 'utf-8')
   })
 
+  // Rename/move a workspace text file (markdown vault behavior)
+  // Returns the final relative path (may be adjusted to avoid collisions)
+  ipcMain.handle(IPC_CHANNELS.WORKSPACE_RENAME_TEXT, async (_event, workspaceId: string, oldRelativePath: string, newRelativePath: string): Promise<string> => {
+    const workspace = getWorkspaceByNameOrId(workspaceId)
+    if (!workspace) throw new Error('Workspace not found')
+
+    const { mkdir, rename, access } = await import('fs/promises')
+    const { constants } = await import('fs')
+    const { join, normalize, dirname, extname, basename } = await import('path')
+
+    const normalizeRelative = (inputPath: string): string => inputPath.replace(/\\/g, '/').replace(/^\/+/, '')
+
+    const oldRel = normalizeRelative(oldRelativePath)
+    let newRel = normalizeRelative(newRelativePath)
+
+    if (oldRel.includes('..') || newRel.includes('..')) {
+      throw new Error('Invalid path: directory traversal not allowed')
+    }
+
+    const oldLower = oldRel.toLowerCase()
+    const newLower = newRel.toLowerCase()
+    const isAllowed = (lower: string) => lower.endsWith('.md') || lower.endsWith('.markdown') || lower.endsWith('.txt')
+    if (!isAllowed(oldLower) || !isAllowed(newLower)) {
+      throw new Error('Invalid file type: only .md, .markdown, and .txt are allowed')
+    }
+
+    const oldAbs = normalize(join(workspace.rootPath, oldRel))
+    if (!oldAbs.startsWith(workspace.rootPath)) {
+      throw new Error('Invalid source path: outside workspace directory')
+    }
+
+    const baseDir = dirname(newRel)
+    const ext = extname(newRel)
+    const baseName = basename(newRel, ext)
+
+    // Avoid collisions by suffixing: "name-2.md", "name-3.md", ...
+    const resolveUniqueTarget = async (): Promise<{ abs: string; rel: string }> => {
+      for (let i = 1; i < 1000; i++) {
+        const candidateName = i === 1 ? `${baseName}${ext}` : `${baseName}-${i}${ext}`
+        const candidateRel = baseDir === '.' ? candidateName : `${baseDir}/${candidateName}`
+        const candidateAbs = normalize(join(workspace.rootPath, candidateRel))
+        if (!candidateAbs.startsWith(workspace.rootPath)) continue
+        if (candidateAbs === oldAbs) {
+          return { abs: candidateAbs, rel: candidateRel }
+        }
+        try {
+          await access(candidateAbs, constants.F_OK)
+        } catch {
+          return { abs: candidateAbs, rel: candidateRel }
+        }
+      }
+      throw new Error('Unable to find a unique destination filename')
+    }
+
+    const { abs: targetAbs, rel: targetRel } = await resolveUniqueTarget()
+    if (targetAbs === oldAbs) return targetRel
+
+    await mkdir(dirname(targetAbs), { recursive: true })
+    await rename(oldAbs, targetAbs)
+    return targetRel
+  })
+
+  // Generic vault text writing (uses user-selected absolute vault root)
+  ipcMain.handle(IPC_CHANNELS.VAULT_READ_TEXT, async (_event, vaultRootPath: string, relativePath: string): Promise<string> => {
+    const { readFile } = await import('fs/promises')
+    const { join, normalize } = await import('path')
+
+    if (!vaultRootPath?.trim()) throw new Error('Vault root path is required')
+    if (relativePath.includes('..')) throw new Error('Invalid path: directory traversal not allowed')
+
+    const normalizedRoot = normalize(vaultRootPath)
+    const normalizedRelativePath = relativePath.replace(/\\/g, '/').replace(/^\/+/, '')
+    const absolutePath = normalize(join(normalizedRoot, normalizedRelativePath))
+
+    if (!absolutePath.startsWith(normalizedRoot)) {
+      throw new Error('Invalid path: outside vault directory')
+    }
+
+    return await readFile(absolutePath, 'utf-8')
+  })
+
+  // Generic vault text writing (uses user-selected absolute vault root)
+  ipcMain.handle(IPC_CHANNELS.VAULT_WRITE_TEXT, async (_event, vaultRootPath: string, relativePath: string, content: string) => {
+    const { mkdir, writeFile } = await import('fs/promises')
+    const { join, normalize, dirname } = await import('path')
+
+    if (!vaultRootPath?.trim()) throw new Error('Vault root path is required')
+    if (relativePath.includes('..')) throw new Error('Invalid path: directory traversal not allowed')
+
+    const normalizedRoot = normalize(vaultRootPath)
+    const normalizedRelativePath = relativePath.replace(/\\/g, '/').replace(/^\/+/, '')
+    const absolutePath = normalize(join(normalizedRoot, normalizedRelativePath))
+
+    if (!absolutePath.startsWith(normalizedRoot)) {
+      throw new Error('Invalid path: outside vault directory')
+    }
+
+    const lower = normalizedRelativePath.toLowerCase()
+    if (!(lower.endsWith('.md') || lower.endsWith('.markdown') || lower.endsWith('.txt'))) {
+      throw new Error('Invalid file type: only .md, .markdown, and .txt are allowed')
+    }
+
+    await mkdir(dirname(absolutePath), { recursive: true })
+    await writeFile(absolutePath, content ?? '', 'utf-8')
+  })
+
+  // Rename/move a vault text file (uses user-selected absolute vault root)
+  ipcMain.handle(IPC_CHANNELS.VAULT_RENAME_TEXT, async (_event, vaultRootPath: string, oldRelativePath: string, newRelativePath: string): Promise<string> => {
+    const { mkdir, rename, access } = await import('fs/promises')
+    const { constants } = await import('fs')
+    const { join, normalize, dirname, extname, basename } = await import('path')
+
+    if (!vaultRootPath?.trim()) throw new Error('Vault root path is required')
+    const normalizedRoot = normalize(vaultRootPath)
+
+    const normalizeRelative = (inputPath: string): string => inputPath.replace(/\\/g, '/').replace(/^\/+/, '')
+    const oldRel = normalizeRelative(oldRelativePath)
+    let newRel = normalizeRelative(newRelativePath)
+
+    if (oldRel.includes('..') || newRel.includes('..')) {
+      throw new Error('Invalid path: directory traversal not allowed')
+    }
+
+    const oldLower = oldRel.toLowerCase()
+    const newLower = newRel.toLowerCase()
+    const isAllowed = (lower: string) => lower.endsWith('.md') || lower.endsWith('.markdown') || lower.endsWith('.txt')
+    if (!isAllowed(oldLower) || !isAllowed(newLower)) {
+      throw new Error('Invalid file type: only .md, .markdown, and .txt are allowed')
+    }
+
+    const oldAbs = normalize(join(normalizedRoot, oldRel))
+    if (!oldAbs.startsWith(normalizedRoot)) {
+      throw new Error('Invalid source path: outside vault directory')
+    }
+
+    const baseDir = dirname(newRel)
+    const ext = extname(newRel)
+    const baseName = basename(newRel, ext)
+
+    const resolveUniqueTarget = async (): Promise<{ abs: string; rel: string }> => {
+      for (let i = 1; i < 1000; i++) {
+        const candidateName = i === 1 ? `${baseName}${ext}` : `${baseName}-${i}${ext}`
+        const candidateRel = baseDir === '.' ? candidateName : `${baseDir}/${candidateName}`
+        const candidateAbs = normalize(join(normalizedRoot, candidateRel))
+        if (!candidateAbs.startsWith(normalizedRoot)) continue
+        if (candidateAbs === oldAbs) return { abs: candidateAbs, rel: candidateRel }
+        try {
+          await access(candidateAbs, constants.F_OK)
+        } catch {
+          return { abs: candidateAbs, rel: candidateRel }
+        }
+      }
+      throw new Error('Unable to find a unique destination filename')
+    }
+
+    const { abs: targetAbs, rel: targetRel } = await resolveUniqueTarget()
+    if (targetAbs === oldAbs) return targetRel
+
+    await mkdir(dirname(targetAbs), { recursive: true })
+    await rename(oldAbs, targetAbs)
+    return targetRel
+  })
+
   // Register onboarding handlers
   registerOnboardingHandlers(sessionManager)
 

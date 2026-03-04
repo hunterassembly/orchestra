@@ -136,6 +136,7 @@ import type { RichTextInputHandle } from "@/components/ui/rich-text-input"
 import { hasOpenOverlay } from "@/lib/overlay-detection"
 import { clearSourceIconCaches } from "@/lib/icon-cache"
 import { VaultNotesListPanel } from "./VaultNotesListPanel"
+import { VaultTasksListPanel } from "./VaultTasksListPanel"
 
 /**
  * AppShellProps - Minimal props interface for AppShell component
@@ -1688,13 +1689,59 @@ function AppShellContent({
     navigate(routes.view.automationsAgentic())
   }, [])
 
+  type NotesSectionId = 'all' | 'daily' | 'ideas'
+  type TasksSectionId = 'today' | 'upcoming' | 'anytime'
+  type KnowledgePanelId = 'notes' | 'tasks'
+  const [activeNotesSection, setActiveNotesSection] = useState<NotesSectionId>('all')
+  const [activeTasksSection, setActiveTasksSection] = useState<TasksSectionId>('today')
+  const [activeKnowledgePanel, setActiveKnowledgePanel] = useState<KnowledgePanelId>('notes')
+  const [taskIndexRefreshToken, setTaskIndexRefreshToken] = useState(0)
+  const [globalVaultRootPath, setGlobalVaultRootPath] = useState<string | null>(null)
+
+  React.useEffect(() => {
+    let cancelled = false
+    const loadVaultPath = async () => {
+      try {
+        const prefs = await window.electronAPI.readPreferences()
+        const parsed = JSON.parse(prefs.content || '{}') as { vault?: { path?: string } }
+        if (!cancelled) setGlobalVaultRootPath(parsed?.vault?.path?.trim() || null)
+      } catch {
+        if (!cancelled) setGlobalVaultRootPath(null)
+      }
+    }
+    void loadVaultPath()
+    return () => { cancelled = true }
+  }, [navState.navigator])
+
   // Handler for notes view
   const handleNotesClick = useCallback(() => {
+    setActiveKnowledgePanel('notes')
+    setActiveNotesSection('all')
+    navigate(routes.view.notes())
+  }, [])
+
+  const handleNotesSectionClick = useCallback((section: NotesSectionId) => {
+    setActiveKnowledgePanel('notes')
+    setActiveNotesSection(section)
+    navigate(routes.view.notes())
+  }, [])
+
+  const handleTasksSectionClick = useCallback((section: TasksSectionId) => {
+    setActiveKnowledgePanel('tasks')
+    setActiveTasksSection(section)
+    // Temporary routing: task sections reuse the Notes workspace surface until
+    // dedicated task navigation state/routes are introduced.
     navigate(routes.view.notes())
   }, [])
 
   const handleNoteSelect = useCallback((notePath: string) => {
+    setActiveKnowledgePanel('notes')
+    setActiveNotesSection('all')
     navigate(routes.view.notes(notePath))
+  }, [])
+
+  const handleNoteSaved = useCallback(() => {
+    setTaskIndexRefreshToken(prev => prev + 1)
   }, [])
 
   // Handler for settings view
@@ -1929,11 +1976,18 @@ function AppShellContent({
     result.push({ id: 'nav:skills', type: 'nav', action: handleSkillsClick })
     result.push({ id: 'nav:automations', type: 'nav', action: handleAutomationsClick })
     result.push({ id: 'nav:notes', type: 'nav', action: handleNotesClick })
+    result.push({ id: 'nav:notes:all', type: 'nav', action: () => handleNotesSectionClick('all') })
+    result.push({ id: 'nav:notes:daily', type: 'nav', action: () => handleNotesSectionClick('daily') })
+    result.push({ id: 'nav:notes:ideas', type: 'nav', action: () => handleNotesSectionClick('ideas') })
+    result.push({ id: 'nav:tasks', type: 'nav', action: () => handleTasksSectionClick('today') })
+    result.push({ id: 'nav:tasks:today', type: 'nav', action: () => handleTasksSectionClick('today') })
+    result.push({ id: 'nav:tasks:upcoming', type: 'nav', action: () => handleTasksSectionClick('upcoming') })
+    result.push({ id: 'nav:tasks:anytime', type: 'nav', action: () => handleTasksSectionClick('anytime') })
     result.push({ id: 'nav:settings', type: 'nav', action: () => handleSettingsClick('app') })
     result.push({ id: 'nav:whats-new', type: 'nav', action: handleWhatsNewClick })
 
     return result
-  }, [handleAllSessionsClick, handleFlaggedClick, handleArchivedClick, handleSessionStatusClick, effectiveSessionStatuses, handleLabelClick, labelConfigs, labelTree, viewConfigs, handleViewClick, handleSourcesClick, handleSkillsClick, handleAutomationsClick, handleNotesClick, handleSettingsClick, handleWhatsNewClick])
+  }, [handleAllSessionsClick, handleFlaggedClick, handleArchivedClick, handleSessionStatusClick, effectiveSessionStatuses, handleLabelClick, labelConfigs, labelTree, viewConfigs, handleViewClick, handleSourcesClick, handleSkillsClick, handleAutomationsClick, handleNotesClick, handleNotesSectionClick, handleTasksSectionClick, handleSettingsClick, handleWhatsNewClick])
 
   // Toggle folder expanded state
   const handleToggleFolder = React.useCallback((path: string) => {
@@ -2455,8 +2509,67 @@ function AppShellContent({
                       id: "nav:notes",
                       title: "Notes",
                       icon: FileText,
-                      variant: isNotesNavigation(navState) ? "default" : "ghost",
-                      onClick: handleNotesClick,
+                      variant: (isNotesNavigation(navState) && activeKnowledgePanel === 'notes') ? "default" : "ghost",
+                      onClick: () => toggleExpanded('nav:notes'),
+                      expandable: true,
+                      expanded: isExpanded('nav:notes'),
+                      onToggle: () => toggleExpanded('nav:notes'),
+                      items: [
+                        {
+                          id: "nav:notes:all",
+                          title: "All Notes",
+                          icon: FileText,
+                          variant: (isNotesNavigation(navState) && activeKnowledgePanel === 'notes' && activeNotesSection === 'all') ? "default" : "ghost",
+                          onClick: () => handleNotesSectionClick('all'),
+                        },
+                        {
+                          id: "nav:notes:daily",
+                          title: "Daily",
+                          icon: FileText,
+                          variant: (isNotesNavigation(navState) && activeKnowledgePanel === 'notes' && activeNotesSection === 'daily') ? "default" : "ghost",
+                          onClick: () => handleNotesSectionClick('daily'),
+                        },
+                        {
+                          id: "nav:notes:ideas",
+                          title: "Ideas",
+                          icon: FileText,
+                          variant: (isNotesNavigation(navState) && activeKnowledgePanel === 'notes' && activeNotesSection === 'ideas') ? "default" : "ghost",
+                          onClick: () => handleNotesSectionClick('ideas'),
+                        },
+                      ],
+                    },
+                    {
+                      id: "nav:tasks",
+                      title: "Tasks",
+                      icon: ListTodo,
+                      variant: (isNotesNavigation(navState) && activeKnowledgePanel === 'tasks') ? "default" : "ghost",
+                      onClick: () => toggleExpanded('nav:tasks'),
+                      expandable: true,
+                      expanded: isExpanded('nav:tasks'),
+                      onToggle: () => toggleExpanded('nav:tasks'),
+                      items: [
+                        {
+                          id: "nav:tasks:today",
+                          title: "Today",
+                          icon: ListTodo,
+                          variant: (isNotesNavigation(navState) && activeKnowledgePanel === 'tasks' && activeTasksSection === 'today') ? "default" : "ghost",
+                          onClick: () => handleTasksSectionClick('today'),
+                        },
+                        {
+                          id: "nav:tasks:upcoming",
+                          title: "Upcoming",
+                          icon: ListTodo,
+                          variant: (isNotesNavigation(navState) && activeKnowledgePanel === 'tasks' && activeTasksSection === 'upcoming') ? "default" : "ghost",
+                          onClick: () => handleTasksSectionClick('upcoming'),
+                        },
+                        {
+                          id: "nav:tasks:anytime",
+                          title: "Anytime",
+                          icon: ListTodo,
+                          variant: (isNotesNavigation(navState) && activeKnowledgePanel === 'tasks' && activeTasksSection === 'anytime') ? "default" : "ghost",
+                          onClick: () => handleTasksSectionClick('anytime'),
+                        },
+                      ],
                     },
                     // --- Separator ---
                     { id: "separator:skills-settings", type: "separator" },
@@ -3231,12 +3344,23 @@ function AppShellContent({
               />
             )}
             {isNotesNavigation(navState) && (
-              <VaultNotesListPanel
-                workspaceId={activeWorkspace?.id ?? null}
-                workspaceRootPath={activeWorkspace?.rootPath ?? null}
-                selectedNotePath={isNotesNavigation(navState) && navState.details ? navState.details.notePath : null}
-                onSelectNote={handleNoteSelect}
-              />
+              activeKnowledgePanel === 'tasks' ? (
+                <VaultTasksListPanel
+                  workspaceRootPath={activeWorkspace?.rootPath ?? null}
+                  vaultRootPath={globalVaultRootPath}
+                  section={activeTasksSection}
+                  onOpenNote={handleNoteSelect}
+                  refreshToken={taskIndexRefreshToken}
+                />
+              ) : (
+                <VaultNotesListPanel
+                  workspaceId={activeWorkspace?.id ?? null}
+                  workspaceRootPath={activeWorkspace?.rootPath ?? null}
+                  vaultRootPath={globalVaultRootPath}
+                  selectedNotePath={isNotesNavigation(navState) && navState.details ? navState.details.notePath : null}
+                  onSelectNote={handleNoteSelect}
+                />
+              )
             )}
             {isSettingsNavigation(navState) && (
               /* Settings Navigator */
@@ -3359,6 +3483,7 @@ function AppShellContent({
                       isAtLeftEdge={effectiveFocusMode && index === 0}
                       isAtRightEdge={index === panelStack.length - 1 && !isRightSidebarVisible}
                       proportion={entry.proportion}
+                      vaultRootPath={globalVaultRootPath}
                       sash={index > 0 ? (
                         <PanelResizeSash
                           leftIndex={index - 1}
@@ -3370,7 +3495,7 @@ function AppShellContent({
                 </div>
               </div>
             ) : (
-              <MainContentPanel isFocusedMode={effectiveFocusMode} />
+              <MainContentPanel isFocusedMode={effectiveFocusMode} onNoteSaved={handleNoteSaved} vaultRootPath={globalVaultRootPath} />
             )}
           </div>
 
