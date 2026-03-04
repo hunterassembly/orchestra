@@ -848,6 +848,8 @@ export const IPC_CHANNELS = {
   // Generic workspace image loading/saving (for icons, etc.)
   WORKSPACE_READ_IMAGE: 'workspace:readImage',
   WORKSPACE_WRITE_IMAGE: 'workspace:writeImage',
+  // Generic workspace markdown/text writing (for local vault notes)
+  WORKSPACE_WRITE_TEXT: 'workspace:writeText',
 
   // Workspace settings (per-workspace configuration)
   WORKSPACE_SETTINGS_GET: 'workspaceSettings:get',
@@ -1243,6 +1245,8 @@ export interface ElectronAPI {
   // Generic workspace image loading/saving (returns data URL for images, raw string for SVG)
   readWorkspaceImage(workspaceId: string, relativePath: string): Promise<string>
   writeWorkspaceImage(workspaceId: string, relativePath: string, base64: string, mimeType: string): Promise<void>
+  // Generic workspace text writing (for markdown notes/vault files)
+  writeWorkspaceText(workspaceId: string, relativePath: string, content: string): Promise<void>
 
   // Tool icon mappings (for Appearance settings page)
   getToolIconMappings(): Promise<ToolIconMapping[]>
@@ -1602,6 +1606,17 @@ export interface AutomationsNavigationState {
 }
 
 /**
+ * Notes navigation state - shows local markdown vault
+ */
+export interface NotesNavigationState {
+  navigator: 'notes'
+  /** Selected note details, or null for empty state */
+  details: { type: 'note'; notePath: string } | null
+  /** Optional right sidebar panel state */
+  rightSidebar?: RightSidebarPanel
+}
+
+/**
  * Unified navigation state - single source of truth for all 3 panels
  *
  * From this state we can derive:
@@ -1615,6 +1630,7 @@ export type NavigationState =
   | SettingsNavigationState
   | SkillsNavigationState
   | AutomationsNavigationState
+  | NotesNavigationState
 
 /**
  * Type guard to check if state is sessions navigation
@@ -1652,6 +1668,13 @@ export const isAutomationsNavigation = (
 ): state is AutomationsNavigationState => state.navigator === 'automations'
 
 /**
+ * Type guard to check if state is notes navigation
+ */
+export const isNotesNavigation = (
+  state: NavigationState
+): state is NotesNavigationState => state.navigator === 'notes'
+
+/**
  * Default navigation state - allSessions with no selection
  */
 export const DEFAULT_NAVIGATION_STATE: NavigationState = {
@@ -1681,6 +1704,12 @@ export const getNavigationStateKey = (state: NavigationState): string => {
       return `automations/automation/${state.details.automationId}`
     }
     return 'automations'
+  }
+  if (state.navigator === 'notes') {
+    if (state.details?.type === 'note') {
+      return `notes/note/${encodeURIComponent(state.details.notePath)}`
+    }
+    return 'notes'
   }
   if (state.navigator === 'settings') {
     return `settings:${state.subpage}`
@@ -1731,6 +1760,16 @@ export const parseNavigationStateKey = (key: string): NavigationState | null => 
       return { navigator: 'automations', details: { type: 'automation', automationId } }
     }
     return { navigator: 'automations', details: null }
+  }
+
+  // Handle notes
+  if (key === 'notes') return { navigator: 'notes', details: null }
+  if (key.startsWith('notes/note/')) {
+    const notePath = decodeURIComponent(key.slice(11))
+    if (notePath) {
+      return { navigator: 'notes', details: { type: 'note', notePath } }
+    }
+    return { navigator: 'notes', details: null }
   }
 
   // Handle settings

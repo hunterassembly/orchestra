@@ -12,7 +12,7 @@
 import * as React from 'react'
 import { useState, useEffect, useCallback, useRef, memo } from 'react'
 import { AnimatePresence, motion, type Variants } from 'motion/react'
-import { ChevronDown, ChevronRight, FolderOpen, ExternalLink, GitBranch, GitCompareArrows, MoreHorizontal } from 'lucide-react'
+import { ChevronDown, ChevronRight, FolderOpen, ExternalLink, GitBranch, GitCompareArrows, MoreHorizontal, FileText, Network, Plus } from 'lucide-react'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@craft-agent/ui'
 import {
   ContextMenu,
@@ -31,6 +31,14 @@ import { useAppShellContext, useActiveWorkspace, useSession as useSessionData } 
 import { getFileManagerName, isMac } from '@/lib/platform'
 import { getFileTypeIcon } from './file-type-icons'
 import { ChangedFilesList } from './ChangedFilesList'
+import { TiptapMarkdownEditor } from '@craft-agent/ui'
+
+interface VaultNote {
+  id: string
+  path: string
+  relativePath: string
+  title: string
+}
 
 // ============================================================
 // Animation variants (matches SessionFilesSection)
@@ -389,11 +397,78 @@ export function WorkspaceFilesPanel({ sessionId, closeButton }: WorkspaceFilesPa
   const [changedEntries, setChangedEntries] = useState<GitStatusEntry[]>([])
   const [gitRepoInfo, setGitRepoInfo] = useState<GitRepoInfo | null>(null)
   const lastReviewFingerprintRef = useRef<string | null>(null)
+  const [vaultNotes, setVaultNotes] = useState<VaultNote[]>([])
+  const [selectedNotePath, setSelectedNotePath] = useState<string | null>(null)
+  const [selectedNoteContent, setSelectedNoteContent] = useState('')
+  const [isSavingNote, setIsSavingNote] = useState(false)
+  const [incomingBacklinks, setIncomingBacklinks] = useState<VaultNote[]>([])
+  const noteSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const handleTabChange = useCallback((value: string) => {
     setActiveTab(value)
     storage.set(storage.KEYS.workspaceFilesActiveTab, value)
   }, [])
+
+  const notesRootPath = React.useMemo(() => {
+    if (!workspace?.rootPath) return null
+    const sep = workspace.rootPath.endsWith('/') ? '' : '/'
+    return `${workspace.rootPath}${sep}notes`
+  }, [workspace?.rootPath])
+
+  const listMarkdownNotes = useCallback(async (dirPath: string): Promise<VaultNote[]> => {
+    const entries = await window.electronAPI.getWorkspaceFiles(dirPath)
+    const nested = await Promise.all(entries.map(async (entry) => {
+      if (entry.type === 'directory') return listMarkdownNotes(entry.path)
+      const lower = entry.name.toLowerCase()
+      if (!lower.endsWith('.md') && !lower.endsWith('.markdown')) return []
+      const relativePath = workspace?.rootPath
+        ? entry.path.replace(`${workspace.rootPath}/`, '')
+        : entry.path
+      return [{
+        id: entry.path,
+        path: entry.path,
+        relativePath,
+        title: entry.name.replace(/\.(md|markdown)$/i, ''),
+      }]
+    }))
+    return nested.flat()
+  }, [workspace?.rootPath])
+
+  const loadVaultNotes = useCallback(async () => {
+    if (!notesRootPath) {
+      setVaultNotes([])
+      return
+    }
+    try {
+      const notes = await listMarkdownNotes(notesRootPath)
+      notes.sort((a, b) => a.relativePath.localeCompare(b.relativePath))
+      setVaultNotes(notes)
+      if (notes.length > 0 && !selectedNotePath) {
+        setSelectedNotePath(notes[0].path)
+      }
+    } catch {
+      setVaultNotes([])
+    }
+  }, [notesRootPath, listMarkdownNotes, selectedNotePath])
+
+  const createNewVaultNote = useCallback(async () => {
+    if (!workspace?.id || !workspace.rootPath || !notesRootPath) return
+    const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-')
+    const fileName = `note-${stamp}.md`
+    const relativePath = `notes/${fileName}`
+    const initial = `# ${fileName.replace(/\.md$/i, '')}\n\n`
+    try {
+      await window.electronAPI.writeWorkspaceText(workspace.id, relativePath, initial)
+      await loadVaultNotes()
+      const absolute = `${workspace.rootPath}/notes/${fileName}`
+      setSelectedNotePath(absolute)
+      setSelectedNoteContent(initial)
+      toast.success('Created new note')
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unable to create note'
+      toast.error(message)
+    }
+  }, [workspace?.id, workspace?.rootPath, notesRootPath, loadVaultNotes])
 
   useEffect(() => {
     if (!rootPath) {
@@ -405,6 +480,57 @@ export function WorkspaceFilesPanel({ sessionId, closeButton }: WorkspaceFilesPa
       .then(setGitRepoInfo)
       .catch(() => setGitRepoInfo(null))
   }, [rootPath])
+
+  // Load vault notes whenever workspace changes
+  useEffect(() => {
+    void loadVaultNotes()
+  }, [loadVaultNotes])
+
+  // Load selected note content
+  useEffect(() => {
+    if (!selectedNotePath) {
+      setSelectedNoteContent('')
+      setIncomingBacklinks([])
+      return
+    }
+    window.electronAPI.readFile(selectedNotePath)
+      .then((content) => setSelectedNoteContent(content || ''))
+      .catch(() => setSelectedNoteContent(''))
+  }, [selectedNotePath])
+
+  // Recompute backlinks (simple wikilink resolver by title)
+  useEffect(() => {
+    if (!selectedNotePath || vaultNotes.length === 0) {
+      setIncomingBacklinks([])
+      return
+    }
+    const selected = vaultNotes.find(n => n.path === selectedNotePath)
+    if (!selected) {
+      setIncomingBacklinks([])
+      return
+    }
+    const title = selected.title.toLowerCase()
+    let cancelled = false
+    ;(async () => {
+      const linkedFrom: VaultNote[] = []
+      await Promise.all(vaultNotes.map(async (note) => {
+        if (note.path === selected.path) return
+        try {
+          const content = await window.electronAPI.readFile(note.path)
+          const matches = content.match(/\[\[([^\]]+)\]\]/g) || []
+          const hasLink = matches.some((m) => m.replace(/^\[\[|\]\]$/g, '').trim().toLowerCase() === title)
+          if (hasLink) linkedFrom.push(note)
+        } catch {
+          // ignore
+        }
+      }))
+      if (!cancelled) {
+        linkedFrom.sort((a, b) => a.relativePath.localeCompare(b.relativePath))
+        setIncomingBacklinks(linkedFrom)
+      }
+    })()
+    return () => { cancelled = true }
+  }, [selectedNotePath, vaultNotes])
 
   const handlePrefillPrompt = useCallback((label: string, prompt: string) => {
     if (openWorkflowTabRef?.current) {
@@ -519,6 +645,25 @@ export function WorkspaceFilesPanel({ sessionId, closeButton }: WorkspaceFilesPa
     toast.success('Review started', { description: 'Sent automated review prompt to chat.' })
   }, [activeTab, sessionId, changedEntries, onSendMessage, openWorkflowTabRef, reviewPrompt])
 
+  const saveVaultNote = useCallback((markdown: string) => {
+    if (!workspace?.id || !workspace.rootPath || !selectedNotePath) return
+    const relativePath = selectedNotePath.replace(`${workspace.rootPath}/`, '')
+    if (noteSaveTimerRef.current) clearTimeout(noteSaveTimerRef.current)
+    setSelectedNoteContent(markdown)
+    setIsSavingNote(true)
+    noteSaveTimerRef.current = setTimeout(() => {
+      window.electronAPI.writeWorkspaceText(workspace.id, relativePath, markdown)
+        .catch((error) => {
+          const message = error instanceof Error ? error.message : 'Failed to save note'
+          toast.error(message)
+        })
+        .finally(() => {
+          setIsSavingNote(false)
+          noteSaveTimerRef.current = null
+        })
+    }, 350)
+  }, [workspace?.id, workspace?.rootPath, selectedNotePath])
+
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
       if (!event.altKey || event.metaKey || event.ctrlKey || event.shiftKey) return
@@ -543,12 +688,24 @@ export function WorkspaceFilesPanel({ sessionId, closeButton }: WorkspaceFilesPa
       } else if (event.key === '4') {
         event.preventDefault()
         handleTabChange('review')
+      } else if (event.key === '5') {
+        event.preventDefault()
+        handleTabChange('notes')
       }
     }
 
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
   }, [handleTabChange])
+
+  useEffect(() => {
+    return () => {
+      if (noteSaveTimerRef.current) {
+        clearTimeout(noteSaveTimerRef.current)
+        noteSaveTimerRef.current = null
+      }
+    }
+  }, [])
 
   if (!rootPath) {
     return (
@@ -649,6 +806,17 @@ export function WorkspaceFilesPanel({ sessionId, closeButton }: WorkspaceFilesPa
               </TooltipTrigger>
               <TooltipContent>Run review {isMac ? '⌥4' : 'Alt+4'}</TooltipContent>
             </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <TabsTrigger
+                  value="notes"
+                  className="h-7 rounded-md px-2.5 py-0 text-xs font-medium cursor-pointer data-[state=active]:bg-muted data-[state=active]:shadow-none"
+                >
+                  Notes
+                </TabsTrigger>
+              </TooltipTrigger>
+              <TooltipContent>Local vault notes {isMac ? '⌥5' : 'Alt+5'}</TooltipContent>
+            </Tooltip>
           </TabsList>
         </div>
       </div>
@@ -695,6 +863,96 @@ export function WorkspaceFilesPanel({ sessionId, closeButton }: WorkspaceFilesPa
             ? 'Review auto-starts in chat for current changes.'
             : 'No changes to review.'}
         </p>
+      </TabsContent>
+
+      {/* Notes tab (local markdown vault) */}
+      <TabsContent value="notes" className="flex-1 min-h-0 mt-0">
+        <div className="h-full grid grid-cols-[220px_1fr] min-h-0">
+          <div className="border-r border-border/40 min-h-0 flex flex-col">
+            <div className="h-9 px-2 flex items-center justify-between border-b border-border/40">
+              <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Vault</span>
+              <button
+                type="button"
+                onClick={createNewVaultNote}
+                className="h-6 w-6 rounded-md hover:bg-muted inline-flex items-center justify-center text-muted-foreground"
+                title="New note"
+              >
+                <Plus className="h-3.5 w-3.5" />
+              </button>
+            </div>
+            <div className="flex-1 overflow-auto p-1.5 space-y-0.5">
+              {vaultNotes.length === 0 ? (
+                <div className="px-2 py-3 text-xs text-muted-foreground">No notes yet</div>
+              ) : (
+                vaultNotes.map((note) => (
+                  <button
+                    key={note.path}
+                    onClick={() => setSelectedNotePath(note.path)}
+                    className={cn(
+                      'w-full text-left rounded-md px-2 py-1.5 text-xs cursor-pointer',
+                      selectedNotePath === note.path ? 'bg-muted text-foreground' : 'text-foreground/80 hover:bg-sidebar-hover',
+                    )}
+                    title={note.relativePath}
+                  >
+                    <div className="flex items-center gap-1.5 min-w-0">
+                      <FileText className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                      <span className="truncate">{note.title}</span>
+                    </div>
+                    <div className="text-[10px] text-muted-foreground truncate pl-5">{note.relativePath}</div>
+                  </button>
+                ))
+              )}
+            </div>
+          </div>
+          <div className="min-h-0 flex flex-col">
+            <div className="h-9 px-3 border-b border-border/40 flex items-center justify-between">
+              <div className="min-w-0">
+                <div className="text-xs font-medium truncate">
+                  {selectedNotePath ? (vaultNotes.find(n => n.path === selectedNotePath)?.title || 'Note') : 'Select a note'}
+                </div>
+              </div>
+              <div className="text-[10px] text-muted-foreground">{isSavingNote ? 'Saving…' : ''}</div>
+            </div>
+            <div className="flex-1 min-h-0 grid grid-rows-[1fr_auto]">
+              <div className="min-h-0 overflow-auto px-3 py-2">
+                {selectedNotePath ? (
+                  <TiptapMarkdownEditor
+                    content={selectedNoteContent}
+                    onUpdate={saveVaultNote}
+                    placeholder="Write your note… Use [[Note Title]] for links."
+                    className="h-full"
+                  />
+                ) : (
+                  <div className="h-full flex items-center justify-center text-xs text-muted-foreground">
+                    Create or select a note from the vault.
+                  </div>
+                )}
+              </div>
+              <div className="border-t border-border/40 px-3 py-2">
+                <div className="flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground mb-1.5">
+                  <Network className="h-3.5 w-3.5" />
+                  Knowledge Graph
+                </div>
+                <div className="text-xs text-muted-foreground">
+                  {vaultNotes.length} notes • {incomingBacklinks.length} backlinks into this note
+                </div>
+                {incomingBacklinks.length > 0 && (
+                  <div className="mt-1.5 flex flex-wrap gap-1">
+                    {incomingBacklinks.slice(0, 8).map((note) => (
+                      <button
+                        key={note.path}
+                        onClick={() => setSelectedNotePath(note.path)}
+                        className="text-[10px] px-1.5 py-0.5 rounded bg-muted hover:bg-muted/80 text-foreground/80"
+                      >
+                        {note.title}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
       </TabsContent>
     </Tabs>
   )

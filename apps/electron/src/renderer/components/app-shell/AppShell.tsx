@@ -32,6 +32,7 @@ import {
   Bot,
   Info,
   Webhook,
+  FileText,
 } from "lucide-react"
 import { PanelRightRounded } from "../icons/PanelRightRounded"
 import { PanelLeftRounded } from "../icons/PanelLeftRounded"
@@ -114,6 +115,7 @@ import {
   isSettingsNavigation,
   isSkillsNavigation,
   isAutomationsNavigation,
+  isNotesNavigation,
   type NavigationState,
   type SessionFilter,
 } from "@/contexts/NavigationContext"
@@ -133,6 +135,7 @@ import { PANEL_GAP } from "./panel-constants"
 import type { RichTextInputHandle } from "@/components/ui/rich-text-input"
 import { hasOpenOverlay } from "@/lib/overlay-detection"
 import { clearSourceIconCaches } from "@/lib/icon-cache"
+import { VaultNotesListPanel } from "./VaultNotesListPanel"
 
 /**
  * AppShellProps - Minimal props interface for AppShell component
@@ -1685,6 +1688,15 @@ function AppShellContent({
     navigate(routes.view.automationsAgentic())
   }, [])
 
+  // Handler for notes view
+  const handleNotesClick = useCallback(() => {
+    navigate(routes.view.notes())
+  }, [])
+
+  const handleNoteSelect = useCallback((notePath: string) => {
+    navigate(routes.view.notes(notePath))
+  }, [])
+
   // Handler for settings view
   const handleSettingsClick = useCallback((subpage: SettingsSubpage = 'app') => {
     navigate(routes.view.settings(subpage))
@@ -1916,11 +1928,12 @@ function AppShellContent({
     result.push({ id: 'nav:sources', type: 'nav', action: handleSourcesClick })
     result.push({ id: 'nav:skills', type: 'nav', action: handleSkillsClick })
     result.push({ id: 'nav:automations', type: 'nav', action: handleAutomationsClick })
+    result.push({ id: 'nav:notes', type: 'nav', action: handleNotesClick })
     result.push({ id: 'nav:settings', type: 'nav', action: () => handleSettingsClick('app') })
     result.push({ id: 'nav:whats-new', type: 'nav', action: handleWhatsNewClick })
 
     return result
-  }, [handleAllSessionsClick, handleFlaggedClick, handleArchivedClick, handleSessionStatusClick, effectiveSessionStatuses, handleLabelClick, labelConfigs, labelTree, viewConfigs, handleViewClick, handleSourcesClick, handleSkillsClick, handleAutomationsClick, handleSettingsClick, handleWhatsNewClick])
+  }, [handleAllSessionsClick, handleFlaggedClick, handleArchivedClick, handleSessionStatusClick, effectiveSessionStatuses, handleLabelClick, labelConfigs, labelTree, viewConfigs, handleViewClick, handleSourcesClick, handleSkillsClick, handleAutomationsClick, handleNotesClick, handleSettingsClick, handleWhatsNewClick])
 
   // Toggle folder expanded state
   const handleToggleFolder = React.useCallback((path: string) => {
@@ -2048,6 +2061,10 @@ function AppShellContent({
         case 'agentic': return 'Agentic'
         default: return 'All Automations'
       }
+    }
+
+    if (isNotesNavigation(navState)) {
+      return 'Notes'
     }
 
     // Settings navigator
@@ -2433,6 +2450,13 @@ function AppShellContent({
                           contextMenu: { type: 'automations' as const, onAddAutomation: openAddAutomation },
                         },
                       ],
+                    },
+                    {
+                      id: "nav:notes",
+                      title: "Notes",
+                      icon: FileText,
+                      variant: isNotesNavigation(navState) ? "default" : "ghost",
+                      onClick: handleNotesClick,
                     },
                     // --- Separator ---
                     { id: "separator:skills-settings", type: "separator" },
@@ -3204,6 +3228,14 @@ function AppShellContent({
                 onDeleteAutomation={handleDeleteAutomation}
                 selectedAutomationId={isAutomationsNavigation(navState) && navState.details ? navState.details.automationId : null}
                 workspaceRootPath={activeWorkspace?.rootPath}
+              />
+            )}
+            {isNotesNavigation(navState) && (
+              <VaultNotesListPanel
+                workspaceId={activeWorkspace?.id ?? null}
+                workspaceRootPath={activeWorkspace?.rootPath ?? null}
+                selectedNotePath={isNotesNavigation(navState) && navState.details ? navState.details.notePath : null}
+                onSelectNote={handleNoteSelect}
               />
             )}
             {isSettingsNavigation(navState) && (

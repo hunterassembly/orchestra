@@ -176,6 +176,12 @@ export const routes = {
     automationsAgentic: (automationId?: string) =>
       automationId ? `automations/agentic/automation/${automationId}` as const : 'automations/agentic' as const,
 
+    /** Notes view (local markdown vault) */
+    notes: (notePath?: string) =>
+      notePath
+        ? `notes/note/${encodeURIComponent(notePath)}` as const
+        : 'notes' as const,
+
     /** Settings view (settings navigator) - uses SettingsSubpage from registry */
     settings: (subpage?: SettingsSubpage) =>
       subpage

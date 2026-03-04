@@ -59,7 +59,19 @@ function resolveClaudeCliPath(hostRuntime: BackendHostRuntimeContext): string | 
   const sdkRelative = join('node_modules', '@anthropic-ai', 'claude-agent-sdk', 'cli.js');
   return firstExistingPath([
     join(hostRuntime.appRootPath, sdkRelative),
-    join(hostRuntime.appRootPath, '..', '..', sdkRelative),
+    // Packaged apps may place extraResources under process.resourcesPath/app/**.
+    ...(hostRuntime.resourcesPath
+      ? [join(hostRuntime.resourcesPath, 'app', sdkRelative), join(hostRuntime.resourcesPath, sdkRelative)]
+      : []),
+    // Dev/runtime cwd can vary (repo root, apps/electron, dist, etc.) across launch paths.
+    ...(() => {
+      const resolved: string[] = [];
+      const fromAppRoot = resolveUpwards(hostRuntime.appRootPath, sdkRelative, 10);
+      if (fromAppRoot) resolved.push(fromAppRoot);
+      const fromCwd = resolveUpwards(process.cwd(), sdkRelative, 10);
+      if (fromCwd) resolved.push(fromCwd);
+      return resolved;
+    })(),
   ]);
 }
 
@@ -67,7 +79,17 @@ function resolveClaudeInterceptorPath(hostRuntime: BackendHostRuntimeContext): s
   const interceptorRelative = join('packages', 'shared', 'src', 'unified-network-interceptor.ts');
   return firstExistingPath([
     join(hostRuntime.appRootPath, interceptorRelative),
-    join(hostRuntime.appRootPath, '..', '..', interceptorRelative),
+    ...(hostRuntime.resourcesPath
+      ? [join(hostRuntime.resourcesPath, 'app', interceptorRelative), join(hostRuntime.resourcesPath, interceptorRelative)]
+      : []),
+    ...(() => {
+      const resolved: string[] = [];
+      const fromAppRoot = resolveUpwards(hostRuntime.appRootPath, interceptorRelative, 10);
+      if (fromAppRoot) resolved.push(fromAppRoot);
+      const fromCwd = resolveUpwards(process.cwd(), interceptorRelative, 10);
+      if (fromCwd) resolved.push(fromCwd);
+      return resolved;
+    })(),
   ]);
 }
 
@@ -189,4 +211,3 @@ export function applyAnthropicRuntimeBootstrap(
     setExecutable(paths.bundledRuntimePath);
   }
 }
-

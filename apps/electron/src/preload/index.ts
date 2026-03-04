@@ -319,6 +319,9 @@ const api: ElectronAPI = {
     ipcRenderer.invoke(IPC_CHANNELS.WORKSPACE_READ_IMAGE, workspaceId, relativePath),
   writeWorkspaceImage: (workspaceId: string, relativePath: string, base64: string, mimeType: string) =>
     ipcRenderer.invoke(IPC_CHANNELS.WORKSPACE_WRITE_IMAGE, workspaceId, relativePath, base64, mimeType),
+  // Generic workspace text writing (for local markdown vault)
+  writeWorkspaceText: (workspaceId: string, relativePath: string, content: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.WORKSPACE_WRITE_TEXT, workspaceId, relativePath, content),
 
   // Sources change listener (live updates when sources are added/removed)
   onSourcesChanged: (callback: (workspaceId: string, sources: import('@craft-agent/shared/sources').LoadedSource[]) => void) => {

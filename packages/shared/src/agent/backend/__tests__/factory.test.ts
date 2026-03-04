@@ -327,13 +327,13 @@ describe('phase4 backend abstraction APIs', () => {
     })).not.toThrow();
   });
 
-  it('initializeBackendHostRuntime throws for dist-style host root in dev', () => {
+  it('initializeBackendHostRuntime supports dist-style host root in dev', () => {
     expect(() => initializeBackendHostRuntime({
       hostRuntime: {
         appRootPath: join(process.cwd(), 'apps', 'electron', 'dist'),
         isPackaged: false,
       },
-    })).toThrow('Claude Code SDK not found');
+    })).not.toThrow();
   });
 
   it('resolveSetupTestConnectionHint maps provider/baseUrl/piAuthProvider correctly', () => {

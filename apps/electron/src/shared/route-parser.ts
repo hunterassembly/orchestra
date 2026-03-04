@@ -35,7 +35,7 @@ export interface ParsedRoute {
 // Compound Route Types (new format)
 // =============================================================================
 
-export type NavigatorType = 'sessions' | 'sources' | 'skills' | 'automations' | 'settings'
+export type NavigatorType = 'sessions' | 'sources' | 'skills' | 'automations' | 'notes' | 'settings'
 
 export interface ParsedCompoundRoute {
   /** The navigator type */
@@ -61,7 +61,7 @@ export interface ParsedCompoundRoute {
  * Known prefixes that indicate a compound route
  */
 const COMPOUND_ROUTE_PREFIXES = [
-  'allSessions', 'flagged', 'archived', 'state', 'label', 'view', 'sources', 'skills', 'automations', 'settings'
+  'allSessions', 'flagged', 'archived', 'state', 'label', 'view', 'sources', 'skills', 'automations', 'notes', 'settings'
 ]
 
 /**
@@ -193,6 +193,21 @@ export function parseCompoundRoute(route: string): ParsedCompoundRoute | null {
     return null
   }
 
+  // Notes navigator
+  if (first === 'notes') {
+    if (segments.length === 1) {
+      return { navigator: 'notes', details: null }
+    }
+    // notes/note/{relativePath}
+    if (segments[1] === 'note' && segments[2]) {
+      return {
+        navigator: 'notes',
+        details: { type: 'note', id: decodeURIComponent(segments[2]) },
+      }
+    }
+    return null
+  }
+
   // Sessions navigator (allSessions, flagged, state)
   let sessionFilter: SessionFilter
   let detailsStartIndex: number
@@ -283,6 +298,11 @@ export function buildCompoundRoute(parsed: ParsedCompoundRoute): string {
     }
     if (!parsed.details) return base
     return `${base}/automation/${parsed.details.id}`
+  }
+
+  if (parsed.navigator === 'notes') {
+    if (!parsed.details) return 'notes'
+    return `notes/note/${encodeURIComponent(parsed.details.id)}`
   }
 
   // Sessions navigator
@@ -406,6 +426,14 @@ function convertCompoundToViewRoute(compound: ParsedCompoundRoute): ParsedRoute 
       return { type: 'view', name: 'automations', params: {} }
     }
     return { type: 'view', name: 'automation-info', id: compound.details.id, params: {} }
+  }
+
+  // Notes
+  if (compound.navigator === 'notes') {
+    if (!compound.details) {
+      return { type: 'view', name: 'notes', params: {} }
+    }
+    return { type: 'view', name: 'note-info', id: compound.details.id, params: {} }
   }
 
   // Sessions
@@ -541,6 +569,17 @@ function convertCompoundToNavigationState(compound: ParsedCompoundRoute): Naviga
     }
   }
 
+  // Notes
+  if (compound.navigator === 'notes') {
+    if (!compound.details) {
+      return { navigator: 'notes', details: null }
+    }
+    return {
+      navigator: 'notes',
+      details: { type: 'note', notePath: compound.details.id },
+    }
+  }
+
   // Sessions
   const filter = compound.sessionFilter || { kind: 'allSessions' as const }
   if (compound.details) {
@@ -618,6 +657,19 @@ function convertParsedRouteToNavigationState(parsed: ParsedRoute): NavigationSta
         }
       }
       return { navigator: 'automations', details: null }
+    case 'notes':
+      return { navigator: 'notes', details: null }
+    case 'note-info':
+      if (parsed.id) {
+        return {
+          navigator: 'notes',
+          details: {
+            type: 'note',
+            notePath: parsed.id,
+          },
+        }
+      }
+      return { navigator: 'notes', details: null }
     case 'session':
       if (parsed.id) {
         // Reconstruct filter from params
@@ -720,6 +772,13 @@ function navigationStateToCompoundRoute(state: NavigationState): ParsedCompoundR
       navigator: 'automations',
       automationFilter: state.filter ?? undefined,
       details: state.details ? { type: 'automation', id: state.details.automationId } : null,
+    }
+  }
+
+  if (state.navigator === 'notes') {
+    return {
+      navigator: 'notes',
+      details: state.details?.type === 'note' ? { type: 'note', id: state.details.notePath } : null,
     }
   }
 

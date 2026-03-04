@@ -30,6 +30,7 @@ import {
   isSettingsNavigation,
   isSkillsNavigation,
   isAutomationsNavigation,
+  isNotesNavigation,
 } from '@/contexts/NavigationContext'
 import { useSessionSelection, useIsMultiSelectActive, useSelectedIds, useSelectionCount } from '@/hooks/useSession'
 import { sourceSelection, skillSelection } from '@/hooks/useEntitySelection'
@@ -41,6 +42,7 @@ import { getSettingsPageComponent } from '@/pages/settings/settings-pages'
 import { AutomationInfoPage } from '../automations/AutomationInfoPage'
 import type { ExecutionEntry } from '../automations/types'
 import { automationsAtom } from '@/atoms/automations'
+import { VaultNoteEditorPanel } from './VaultNoteEditorPanel'
 
 export interface MainContentPanelProps {
   /** Whether both sidebar and navigator are hidden (focus mode / CMD+.) */
@@ -292,6 +294,15 @@ export function MainContentPanel({
         <div className="flex items-center justify-center h-full text-muted-foreground">
           <p className="text-sm">No automations configured</p>
         </div>
+      </Panel>
+    )
+  }
+
+  // Notes navigator - show local markdown vault editor
+  if (isNotesNavigation(navState)) {
+    return wrapWithStoplight(
+      <Panel variant="grow" className={className}>
+        <VaultNoteEditorPanel notePath={navState.details?.notePath ?? null} />
       </Panel>
     )
   }
