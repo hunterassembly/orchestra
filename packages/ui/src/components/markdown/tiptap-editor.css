@@ -5,6 +5,46 @@
   min-height: 60px;
 }
 
+.tiptap-editor {
+  position: relative;
+}
+
+.tiptap-editor .tiptap-drag-handle {
+  position: absolute;
+  left: -26px;
+  z-index: 40;
+  width: 20px;
+  height: 20px;
+  border: 1px solid color-mix(in oklch, var(--foreground) 14%, transparent);
+  border-radius: 6px;
+  background: var(--background);
+  color: color-mix(in oklch, var(--foreground) 70%, transparent);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: grab;
+}
+
+.tiptap-editor .tiptap-drag-handle:hover {
+  color: var(--foreground);
+  background: color-mix(in oklch, var(--foreground) 5%, transparent);
+}
+
+.tiptap-editor .tiptap-drag-handle:active {
+  cursor: grabbing;
+}
+
+.tiptap-editor .tiptap-drop-indicator {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 2px;
+  border-radius: 999px;
+  background: var(--accent);
+  z-index: 30;
+  pointer-events: none;
+}
+
 /* Placeholder */
 .tiptap-editor .tiptap-prose p.is-editor-empty:first-child::before {
   content: attr(data-placeholder);
@@ -314,6 +354,10 @@
 
 .tiptap-editor .tiptap-slash-menu__item:hover {
   background: color-mix(in oklch, var(--foreground) 5%, transparent);
+}
+
+.tiptap-editor .tiptap-slash-menu__item--active {
+  background: color-mix(in oklch, var(--foreground) 7%, transparent);
 }
 
 .tiptap-editor .tiptap-slash-menu__kbd {
