@@ -1,6 +1,20 @@
 import * as React from 'react'
 import { Command as CommandPrimitive } from 'cmdk'
-import { Brain, Check } from 'lucide-react'
+import {
+  Bot,
+  Brain,
+  Check,
+  CircleHelp,
+  GitBranch,
+  GitCommitHorizontal,
+  GitPullRequest,
+  LayoutPanelTop,
+  ListChecks,
+  SearchCheck,
+  SplitSquareVertical,
+  Sparkles,
+  Workflow,
+} from 'lucide-react'
 import { Icon_Folder } from '@craft-agent/ui'
 import { cn } from '@/lib/utils'
 import { PERMISSION_MODE_CONFIG, PERMISSION_MODE_ORDER, type PermissionMode } from '@craft-agent/shared/agent/modes'
@@ -12,7 +26,23 @@ import { AGENTS_PLUGIN_NAME } from '@craft-agent/shared/skills/types'
 // Types
 // ============================================================================
 
-export type SlashCommandId = 'safe' | 'ask' | 'allow-all' | 'ultrathink'
+export type SlashCommandId =
+  | 'safe'
+  | 'ask'
+  | 'allow-all'
+  | 'ultrathink'
+  | 'subagents'
+  | 'review'
+  | 'commit'
+  | 'create-pr'
+  | 'plan'
+  | 'status'
+  | 'branch'
+  | 'diff'
+  | 'model'
+  | 'new-tab'
+  | 'compact'
+  | 'help'
 
 /** Union type for all item types in the slash menu */
 export type SlashItemType = 'command' | 'folder' | 'skill'
@@ -23,6 +53,8 @@ export interface SlashCommand {
   description: string
   icon: React.ReactNode
   shortcut?: string
+  /** If set, selecting the command inserts this text into input instead of toggling state */
+  insertText?: string
   /** Optional color for the command (hex color string) */
   color?: string
 }
@@ -100,6 +132,93 @@ const permissionModeCommands: SlashCommand[] = PERMISSION_MODE_ORDER.map(mode =>
     icon: <PermissionModeIcon mode={mode} className={MENU_ICON_SIZE} />,
   }
 })
+
+const cliFeatureCommands: SlashCommand[] = [
+  {
+    id: 'plan',
+    label: '/plan',
+    description: 'Create an implementation plan',
+    icon: <ListChecks className={MENU_ICON_SIZE} />,
+    insertText: '/plan ',
+  },
+  {
+    id: 'status',
+    label: '/status',
+    description: 'Show current progress and blockers',
+    icon: <Workflow className={MENU_ICON_SIZE} />,
+    insertText: '/status ',
+  },
+  {
+    id: 'subagents',
+    label: '/subagents',
+    description: 'Run focused tasks in parallel subagents',
+    icon: <Bot className={MENU_ICON_SIZE} />,
+    insertText: '/subagents ',
+  },
+  {
+    id: 'review',
+    label: '/review',
+    description: 'Start a code review workflow',
+    icon: <SearchCheck className={MENU_ICON_SIZE} />,
+    insertText: '/review ',
+  },
+  {
+    id: 'commit',
+    label: '/commit',
+    description: 'Create a commit from current changes',
+    icon: <GitCommitHorizontal className={MENU_ICON_SIZE} />,
+    insertText: '/commit ',
+  },
+  {
+    id: 'create-pr',
+    label: '/create-pr',
+    description: 'Create a pull request from current branch',
+    icon: <GitPullRequest className={MENU_ICON_SIZE} />,
+    insertText: '/create-pr ',
+  },
+  {
+    id: 'branch',
+    label: '/branch',
+    description: 'Switch or create a branch',
+    icon: <GitBranch className={MENU_ICON_SIZE} />,
+    insertText: '/branch ',
+  },
+  {
+    id: 'diff',
+    label: '/diff',
+    description: 'Summarize current git diff',
+    icon: <SplitSquareVertical className={MENU_ICON_SIZE} />,
+    insertText: '/diff ',
+  },
+  {
+    id: 'model',
+    label: '/model',
+    description: 'Switch model for this session',
+    icon: <Sparkles className={MENU_ICON_SIZE} />,
+    insertText: '/model ',
+  },
+  {
+    id: 'new-tab',
+    label: '/new-tab',
+    description: 'Create a new tab for this workflow',
+    icon: <LayoutPanelTop className={MENU_ICON_SIZE} />,
+    insertText: '/new-tab ',
+  },
+  {
+    id: 'compact',
+    label: '/compact',
+    description: 'Compact context before continuing',
+    icon: <Workflow className={MENU_ICON_SIZE} />,
+    insertText: '/compact ',
+  },
+  {
+    id: 'help',
+    label: '/help',
+    description: 'Show slash commands and shortcuts',
+    icon: <CircleHelp className={MENU_ICON_SIZE} />,
+    insertText: '/help ',
+  },
+]
 
 const ultrathinkCommand: SlashCommand = {
   id: 'ultrathink',
@@ -527,7 +646,7 @@ export function InlineSlashCommand({
       {/* Always-visible footer hint for @ mentions */}
       <div className="h-px bg-border/50 mx-2" />
       <div className="px-3 py-2.5 select-none text-xs text-muted-foreground">
-        Use / for skills and actions · @ for files and sources
+        Use / for CLI actions and skills · @ for files and sources
       </div>
     </div>
   )
@@ -610,11 +729,11 @@ export function useInlineSlashCommand({
   const sections = React.useMemo((): SlashSection[] => {
     const result: SlashSection[] = []
 
-    // Modes section
+    // CLI features section (Codex-like commands)
     result.push({
-      id: 'modes',
-      label: 'Modes',
-      items: permissionModeCommands,
+      id: 'cli',
+      label: 'CLI Features',
+      items: cliFeatureCommands,
     })
 
     // Skills section
@@ -631,13 +750,6 @@ export function useInlineSlashCommand({
         })),
       })
     }
-
-    // Features section
-    result.push({
-      id: 'features',
-      label: 'Features',
-      items: [ultrathinkCommand],
-    })
 
     // Recent folders section - sorted alphabetically by folder name, show all
     if (recentFolders.length > 0) {
@@ -730,7 +842,15 @@ export function useInlineSlashCommand({
       const { value: currentValue, cursorPosition } = currentInputRef.current
       const before = currentValue.slice(0, slashStart)
       const after = currentValue.slice(cursorPosition)
-      result = (before + after).trim()
+      const selectedCommand = sections
+        .flatMap(section => section.items)
+        .find(item => !isFolder(item) && !isSkill(item) && item.id === commandId) as SlashCommand | undefined
+
+      if (selectedCommand?.insertText) {
+        result = `${before}${selectedCommand.insertText}${after}`
+      } else {
+        result = (before + after).trim()
+      }
     }
 
     // Now safe to trigger state changes
@@ -738,7 +858,7 @@ export function useInlineSlashCommand({
     setIsOpen(false)
 
     return result
-  }, [onSelectCommand, slashStart])
+  }, [onSelectCommand, slashStart, sections])
 
   const handleSelectFolder = React.useCallback((path: string): string => {
     // Capture values BEFORE any state changes to avoid race conditions

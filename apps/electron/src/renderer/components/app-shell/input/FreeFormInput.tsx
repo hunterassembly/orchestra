@@ -335,6 +335,90 @@ export function FreeFormInput({
   const llmConnections = appShellCtx?.llmConnections ?? []
   const workspaceDefaultConnection = appShellCtx?.workspaceDefaultLlmConnection
 
+  const dispatchWorkflowPrompt = React.useCallback((label: string, prompt: string, autoSend = true) => {
+    if (appShellCtx?.openWorkflowTabRef?.current) {
+      appShellCtx.openWorkflowTabRef.current({ label, prompt, autoSend })
+      return
+    }
+    if (autoSend) {
+      onSubmit(prompt)
+    }
+  }, [appShellCtx, onSubmit])
+
+  const routeSlashCommand = React.useCallback((rawInput: string): boolean => {
+    const trimmed = rawInput.trim()
+    if (!trimmed.startsWith('/')) return false
+
+    const match = trimmed.match(/^\/([a-z0-9-]+)(?:\s+([\s\S]*))?$/i)
+    if (!match) return false
+
+    const command = (match[1] || '').toLowerCase()
+    const args = (match[2] || '').trim()
+
+    switch (command) {
+      case 'plan': {
+        const prompt = args || 'Create a clear implementation plan for the current request, including steps and validation.'
+        dispatchWorkflowPrompt('Plan', prompt, true)
+        return true
+      }
+      case 'status': {
+        dispatchWorkflowPrompt('Status', 'Summarize current progress, completed work, remaining work, and any blockers.', true)
+        return true
+      }
+      case 'subagents': {
+        const prompt = args || 'Use subagents in parallel to tackle this task. Then synthesize a single recommended path.'
+        dispatchWorkflowPrompt('Subagents', prompt, true)
+        return true
+      }
+      case 'review': {
+        dispatchWorkflowPrompt('Code Review', 'Run a high-signal code review of the current workspace changes. Focus on real bugs and clear rule violations only.', true)
+        return true
+      }
+      case 'commit': {
+        dispatchWorkflowPrompt('Make Commit', 'Review uncommitted changes, prepare a clean commit message, and create a commit. Ask if any required info is missing.', true)
+        return true
+      }
+      case 'create-pr': {
+        dispatchWorkflowPrompt('Create PR', 'Prepare and create a pull request from the current branch onto main. Include a concise, accurate title and description.', true)
+        return true
+      }
+      case 'branch': {
+        const prompt = args
+          ? `Switch this workspace to branch "${args}". If it only exists on origin, check it out as a local tracking branch.`
+          : 'Show current branch, then list local/remote branches and ask which one to switch to.'
+        dispatchWorkflowPrompt('Git Branch', prompt, true)
+        return true
+      }
+      case 'diff': {
+        dispatchWorkflowPrompt('Diff Summary', 'Summarize the current git diff by file and call out the most important code changes.', true)
+        return true
+      }
+      case 'model': {
+        setModelDropdownOpen(true)
+        toast.message('Model picker opened')
+        return true
+      }
+      case 'new-tab': {
+        dispatchWorkflowPrompt(args ? `Tab: ${args}` : 'New Tab', args || '', false)
+        return true
+      }
+      case 'compact': {
+        onSubmit('/compact')
+        return true
+      }
+      case 'help': {
+        dispatchWorkflowPrompt(
+          'Slash Help',
+          'Show available slash commands with a one-line description and example for each command.',
+          true,
+        )
+        return true
+      }
+      default:
+        return false
+    }
+  }, [dispatchWorkflowPrompt, onSubmit])
+
   // Derive connectionDefaultModel per-session from the effective connection.
   // Only non-null for compat providers (custom endpoints with fixed models).
   // Standard providers (anthropic, openai, bedrock, vertex) → null → normal model picker.
@@ -1177,6 +1261,21 @@ export function FreeFormInput({
     // Tutorial may disable sending to guide user through specific steps
     if (disableSend) return false
 
+    // Deterministic slash command routing (Codex CLI style).
+    // If handled here, we do not send the raw command as a normal chat message.
+    const handledSlashCommand = attachments.length === 0 && routeSlashCommand(input)
+    if (handledSlashCommand) {
+      setInput('')
+      setAttachments([])
+      if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current)
+      onInputChange?.('')
+      prevInputValueRef.current = ''
+      requestAnimationFrame(() => {
+        richInputRef.current?.focus()
+      })
+      return true
+    }
+
     // Parse all @mentions (skills, sources, folders)
     const skillSlugs = skills.map(s => s.slug)
     const sourceSlugs = sources.map(s => s.config.slug)
@@ -1209,7 +1308,7 @@ export function FreeFormInput({
     })
 
     return true
-  }, [input, attachments, disabled, disableSend, onInputChange, onSubmit, skills, sources, optimisticSourceSlugs, onSourcesChange, onWorkingDirectoryChange, homeDir])
+  }, [input, attachments, disabled, disableSend, onInputChange, onSubmit, skills, sources, optimisticSourceSlugs, onSourcesChange, onWorkingDirectoryChange, homeDir, routeSlashCommand])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
