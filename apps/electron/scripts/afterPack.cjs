@@ -50,4 +50,24 @@ module.exports = async function afterPack(context) {
     console.log(`Warning: Could not copy Assets.car: ${err.message}`);
     console.log('The app will use the fallback icon.icns on all macOS versions');
   }
+
+  // Validate critical runtime artifacts so we fail packaging early instead of
+  // shipping a build that crashes with "app package may be corrupted".
+  const appRoot = path.join(resourcesDir, 'app');
+  const requiredRuntimeFiles = [
+    path.join(appRoot, 'node_modules', '@anthropic-ai', 'claude-agent-sdk', 'cli.js'),
+    path.join(appRoot, 'dist', 'interceptor.cjs'),
+    path.join(appRoot, 'vendor', 'bun', 'bun'),
+  ];
+
+  const missing = requiredRuntimeFiles.filter(file => !fs.existsSync(file));
+  if (missing.length > 0) {
+    console.error('❌ afterPack validation failed. Missing runtime files:');
+    for (const file of missing) {
+      console.error(`   - ${file}`);
+    }
+    throw new Error('Packaged app is missing required runtime dependencies (SDK/interceptor/bun).');
+  }
+
+  console.log('✅ afterPack runtime validation passed');
 };

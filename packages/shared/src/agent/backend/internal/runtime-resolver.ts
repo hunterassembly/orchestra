@@ -61,7 +61,12 @@ function resolveClaudeCliPath(hostRuntime: BackendHostRuntimeContext): string | 
     join(hostRuntime.appRootPath, sdkRelative),
     // Packaged apps may place extraResources under process.resourcesPath/app/**.
     ...(hostRuntime.resourcesPath
-      ? [join(hostRuntime.resourcesPath, 'app', sdkRelative), join(hostRuntime.resourcesPath, sdkRelative)]
+      ? [
+          join(hostRuntime.resourcesPath, 'app', sdkRelative),
+          join(hostRuntime.resourcesPath, sdkRelative),
+          // Some packaging layouts place resources under app/dist.
+          join(hostRuntime.resourcesPath, 'app', 'dist', sdkRelative),
+        ]
       : []),
     // Dev/runtime cwd can vary (repo root, apps/electron, dist, etc.) across launch paths.
     ...(() => {
@@ -76,18 +81,31 @@ function resolveClaudeCliPath(hostRuntime: BackendHostRuntimeContext): string | 
 }
 
 function resolveClaudeInterceptorPath(hostRuntime: BackendHostRuntimeContext): string | undefined {
-  const interceptorRelative = join('packages', 'shared', 'src', 'unified-network-interceptor.ts');
+  const interceptorSourceRelative = join('packages', 'shared', 'src', 'unified-network-interceptor.ts');
+  const interceptorBundleRelative = join('dist', 'interceptor.cjs');
   return firstExistingPath([
-    join(hostRuntime.appRootPath, interceptorRelative),
+    // Source form (dev / unpacked app with sources included)
+    join(hostRuntime.appRootPath, interceptorSourceRelative),
+    // Bundled form (preferred for packaged apps)
+    join(hostRuntime.appRootPath, interceptorBundleRelative),
     ...(hostRuntime.resourcesPath
-      ? [join(hostRuntime.resourcesPath, 'app', interceptorRelative), join(hostRuntime.resourcesPath, interceptorRelative)]
+      ? [
+          join(hostRuntime.resourcesPath, 'app', interceptorSourceRelative),
+          join(hostRuntime.resourcesPath, interceptorSourceRelative),
+          join(hostRuntime.resourcesPath, 'app', interceptorBundleRelative),
+          join(hostRuntime.resourcesPath, interceptorBundleRelative),
+        ]
       : []),
     ...(() => {
       const resolved: string[] = [];
-      const fromAppRoot = resolveUpwards(hostRuntime.appRootPath, interceptorRelative, 10);
-      if (fromAppRoot) resolved.push(fromAppRoot);
-      const fromCwd = resolveUpwards(process.cwd(), interceptorRelative, 10);
-      if (fromCwd) resolved.push(fromCwd);
+      const fromAppRootSource = resolveUpwards(hostRuntime.appRootPath, interceptorSourceRelative, 10);
+      if (fromAppRootSource) resolved.push(fromAppRootSource);
+      const fromAppRootBundle = resolveUpwards(hostRuntime.appRootPath, interceptorBundleRelative, 10);
+      if (fromAppRootBundle) resolved.push(fromAppRootBundle);
+      const fromCwdSource = resolveUpwards(process.cwd(), interceptorSourceRelative, 10);
+      if (fromCwdSource) resolved.push(fromCwdSource);
+      const fromCwdBundle = resolveUpwards(process.cwd(), interceptorBundleRelative, 10);
+      if (fromCwdBundle) resolved.push(fromCwdBundle);
       return resolved;
     })(),
   ]);
@@ -205,9 +223,13 @@ export function applyAnthropicRuntimeBootstrap(
   setInterceptorPath(paths.claudeInterceptorPath);
 
   if (hostRuntime.isPackaged) {
-    if (!paths.bundledRuntimePath) {
-      throw new Error('Bundled Bun runtime not found. The app package may be corrupted.');
+    if (paths.bundledRuntimePath) {
+      setExecutable(paths.bundledRuntimePath);
+    } else {
+      // Graceful fallback: if the packaged Bun runtime is missing, try system bun.
+      // This avoids hard-bricking packaged builds when vendor/bun is omitted.
+      setExecutable('bun');
+      console.warn('[runtime-resolver] Bundled Bun runtime missing in packaged app; falling back to bun on PATH.');
     }
-    setExecutable(paths.bundledRuntimePath);
   }
 }

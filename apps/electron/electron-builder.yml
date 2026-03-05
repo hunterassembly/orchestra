@@ -99,7 +99,9 @@ mac:
   entitlements: build/entitlements.mac.plist
   entitlementsInherit: build/entitlements.mac.plist
   extraResources:
-    - from: node_modules/@anthropic-ai/claude-agent-sdk
+    # In this monorepo, SDK may be hoisted to root node_modules (../../node_modules)
+    # rather than apps/electron/node_modules. Use root path so packaging is reliable.
+    - from: ../../node_modules/@anthropic-ai/claude-agent-sdk
       to: app/node_modules/@anthropic-ai/claude-agent-sdk
       filter:
         - "**/*"
@@ -168,7 +170,7 @@ win:
     - "!**/resources/bin/win32-x64/**"
   # Copy executables as extraResources to avoid EBUSY file locking (see comment above)
   extraResources:
-    - from: node_modules/@anthropic-ai/claude-agent-sdk
+    - from: ../../node_modules/@anthropic-ai/claude-agent-sdk
       to: app/node_modules/@anthropic-ai/claude-agent-sdk
       filter:
         - "**/*"
@@ -202,7 +204,7 @@ linux:
         - x64
   artifactName: "Orchestra-${arch}.${ext}"
   extraResources:
-    - from: node_modules/@anthropic-ai/claude-agent-sdk
+    - from: ../../node_modules/@anthropic-ai/claude-agent-sdk
       to: app/node_modules/@anthropic-ai/claude-agent-sdk
       filter:
         - "**/*"
