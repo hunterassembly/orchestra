@@ -1350,7 +1350,7 @@ export function FreeFormInput({
         const preferredDeviceLabel = await resolvePreferredMicLabelForNativePtt()
         await window.electronAPI.startNativePushToTalk(preferredDeviceLabel)
         setIsDictating(true)
-        toast.message('Listening… release Space to transcribe')
+        toast.message('Listening… release ⌥ Space to transcribe')
         return
       } catch (error) {
         console.error('[FreeFormInput] Failed to start native push-to-talk:', error)
@@ -1394,7 +1394,7 @@ export function FreeFormInput({
 
       recorder.start()
       setIsDictating(true)
-      toast.message('Listening… release Space to transcribe')
+      toast.message('Listening… release ⌥ Space to transcribe')
     } catch (error) {
       if (stream) {
         stream.getTracks().forEach(track => track.stop())
@@ -1531,10 +1531,10 @@ export function FreeFormInput({
     if (
       pushToTalkWhisper &&
       e.key === ' ' &&
+      e.altKey &&
       !e.shiftKey &&
       !e.metaKey &&
       !e.ctrlKey &&
-      !e.altKey &&
       !e.nativeEvent.isComposing &&
       !inlineMention.isOpen &&
       !inlineSlash.isOpen &&

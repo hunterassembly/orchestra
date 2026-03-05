@@ -158,8 +158,8 @@ export default function InputSettingsPage() {
                     onCheckedChange={handleSpellCheckChange}
                   />
                   <SettingsToggle
-                    label="Hold Space to dictate"
-                    description="Hold Space in the input to record, then transcribe with your local Whisper setup."
+                    label="Hold ⌥ Space to dictate"
+                    description="Hold Option+Space in the input to record, then transcribe with your local Whisper setup."
                     checked={pushToTalkWhisper}
                     onCheckedChange={handlePushToTalkWhisperChange}
                   />
