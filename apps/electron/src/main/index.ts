@@ -3,9 +3,10 @@
 import { loadShellEnv } from './shell-env'
 loadShellEnv()
 
-import { app, BrowserWindow } from 'electron'
-import { createHash } from 'crypto'
+import { app, BrowserWindow, dialog, ipcMain, nativeImage, nativeTheme, shell } from 'electron'
+import { createHash, randomUUID } from 'crypto'
 import { hostname, homedir } from 'os'
+import { inspect } from 'util'
 import * as Sentry from '@sentry/electron/main'
 
 // Initialize Sentry error tracking as early as possible after app import.
@@ -65,10 +66,16 @@ Sentry.setUser({ id: machineId })
 
 import { join, delimiter } from 'path'
 import { existsSync } from 'fs'
-import { inspect } from 'util'
-import { SessionManager } from './sessions'
+import { SessionManager, setSessionPlatform, setSessionRuntimeHooks } from '@craft-agent/server-core/sessions'
+import { registerAllRpcHandlers } from './handlers/index'
 import { registerIpcHandlers } from './ipc'
-import { initModelRefreshService, getModelRefreshService } from './model-fetchers'
+import { cleanupSessionFileWatchForClient } from '@craft-agent/server-core/handlers/rpc'
+import type { PlatformServices } from '../runtime/platform'
+import type { HandlerDeps } from './handlers/handler-deps'
+import type { RpcServer } from '@craft-agent/server-core/transport'
+import { WsRpcServer } from '../transport/server'
+import { initModelRefreshService, getModelRefreshService, setFetcherPlatform } from '@craft-agent/server-core/model-fetchers'
+import { setSearchPlatform, setImageProcessor } from '@craft-agent/server-core/services'
 import { createApplicationMenu } from './menu'
 import { WindowManager } from './window-manager'
 import { loadWindowState, saveWindowState } from './window-state'
@@ -83,14 +90,16 @@ import { initializeBackendHostRuntime } from '@craft-agent/shared/agent/backend'
 import { setPowerShellValidatorRoot } from '@craft-agent/shared/agent'
 import { handleDeepLink } from './deep-link'
 import { BrowserPaneManager } from './browser-pane-manager'
+import { OAuthFlowStore } from '@craft-agent/shared/auth'
 import { registerThumbnailScheme, registerThumbnailHandler } from './thumbnail-protocol'
 import log, { isDebugMode, mainLog, getLogFilePath } from './logger'
 import { setPerfEnabled, enableDebug } from '@craft-agent/shared/utils'
 import { registerPiModelResolver } from '@craft-agent/shared/config'
 import { getPiModelsForAuthProvider, getAllPiModels } from '@craft-agent/shared/config'
-import { initNotificationService, initBadgeIcon, initInstanceBadge } from './notifications'
-import { checkForUpdatesOnLaunch, setWindowManager as setAutoUpdateWindowManager, isUpdating } from './auto-update'
-import { validateGitBashPath } from './git-bash'
+import { initNotificationService, initBadgeIcon, initInstanceBadge, updateBadgeCount } from './notifications'
+import { checkForUpdatesOnLaunch, setAutoUpdateEventSink, isUpdating } from './auto-update'
+import type { EventSink } from '@craft-agent/server-core/transport'
+import { validateGitBashPath } from '@craft-agent/server-core/services'
 import { createMobileGatewayController, type MobileGatewayController } from './mobile-gateway'
 
 // Initialize electron-log for renderer process support
@@ -121,7 +130,19 @@ if (isDebugMode) {
   const bundledUvExists = existsSync(uvBinary)
   const fallbackUv = bundledUvExists ? null : 'uv'
 
+  // Runtime resolver hints for shared session tools
+  process.env.CRAFT_IS_PACKAGED = app.isPackaged ? '1' : '0'
+  process.env.CRAFT_RESOURCES_BASE = resourcesBase
+  process.env.CRAFT_APP_ROOT = app.isPackaged ? app.getAppPath() : process.cwd()
+
   process.env.CRAFT_UV = bundledUvExists ? uvBinary : (fallbackUv ?? uvBinary)
+
+  // Bun runtime (packaged builds should prefer bundled runtime over PATH)
+  const bunBinary = join(resourcesBase, 'vendor', 'bun', process.platform === 'win32' ? 'bun.exe' : 'bun')
+  if (existsSync(bunBinary)) {
+    process.env.CRAFT_BUN = bunBinary
+  }
+
   process.env.CRAFT_SCRIPTS = scriptsDir
   // Prepend both generic wrappers dir and platform uv dir:
   // - binDir exposes wrapper commands (pdf-tool, docx-tool, ...)
@@ -166,8 +187,6 @@ function resolveConfigRoot(appName: string): string {
 }
 
 function applyIsolatedElectronPaths(configRoot: string): void {
-  // Keep per-app Chromium/Electron state isolated (singleton lock, caches, cookies, etc.)
-  // so Orchestra and Orchestra Dev can run side-by-side without stomping each other.
   app.setPath('userData', join(configRoot, 'electron-userdata'))
   app.setPath('sessionData', join(configRoot, 'electron-session-data'))
   app.setPath('logs', join(configRoot, 'logs'))
@@ -180,7 +199,6 @@ function resolveDefaultDeepLinkScheme(appName: string): string {
 }
 
 // Custom URL scheme for deeplinks (e.g., orchestra://auth-complete)
-// Supports multi-instance dev and dev/prod side-by-side installs.
 const DEEPLINK_SCHEME = process.env.CRAFT_DEEPLINK_SCHEME || resolveDefaultDeepLinkScheme(APP_DISPLAY_NAME)
 process.env.CRAFT_CONFIG_DIR = resolveConfigRoot(APP_DISPLAY_NAME)
 applyIsolatedElectronPaths(process.env.CRAFT_CONFIG_DIR)
@@ -188,16 +206,18 @@ applyIsolatedElectronPaths(process.env.CRAFT_CONFIG_DIR)
 let windowManager: WindowManager | null = null
 let sessionManager: SessionManager | null = null
 let browserPaneManager: BrowserPaneManager | null = null
+let oauthFlowStore: OAuthFlowStore | null = null
+let moduleSink: EventSink | null = null
+let moduleClientResolver: ((webContentsId: number) => string | undefined) | null = null
 let mobileGatewayController: MobileGatewayController | null = null
 
 // Store pending deep link if app not ready yet (cold start)
 let pendingDeepLink: string | null = null
 
-// Set app name early (before app.whenReady) to ensure correct macOS menu bar title
-// Supports multi-instance dev: CRAFT_APP_NAME env var (e.g., "Orchestra [1]")
+// Set app name early (before app.whenReady) to ensure correct macOS menu bar title.
 app.setName(APP_DISPLAY_NAME)
 
-// Register as default protocol client for orchestra:// URLs
+// Register as default protocol client for craftagents:// URLs
 // This must be done before app.whenReady() on some platforms
 if (process.defaultApp) {
   // Development mode: need to pass the app path
@@ -213,13 +233,25 @@ if (process.defaultApp) {
 // Must happen before app.whenReady() — Electron requires early scheme registration.
 registerThumbnailScheme()
 
+async function runStartupStep(name: string, step: () => void | Promise<void>): Promise<void> {
+  try {
+    await step()
+  } catch (error) {
+    if (error instanceof Error) {
+      mainLog.error(`[startup] ${name} failed: ${error.message}`, error.stack)
+    } else {
+      mainLog.error(`[startup] ${name} failed:`, error)
+    }
+  }
+}
+
 // Handle deeplink on macOS (when app is already running)
 app.on('open-url', (event, url) => {
   event.preventDefault()
   mainLog.info('Received deeplink:', url)
 
   if (windowManager) {
-    handleDeepLink(url, windowManager).catch(err => {
+    handleDeepLink(url, windowManager, moduleSink ?? undefined, moduleClientResolver ?? undefined).catch(err => {
       mainLog.error('Failed to handle deep link:', err)
     })
   } else {
@@ -239,7 +271,7 @@ if (!gotTheLock) {
     const url = commandLine.find(arg => arg.startsWith(`${DEEPLINK_SCHEME}://`))
     if (url && windowManager) {
       mainLog.info('Received deeplink from second instance:', url)
-      handleDeepLink(url, windowManager).catch(err => {
+      handleDeepLink(url, windowManager, moduleSink ?? undefined, moduleClientResolver ?? undefined).catch(err => {
         mainLog.error('Failed to handle deep link:', err)
       })
     } else if (windowManager) {
@@ -307,27 +339,14 @@ async function createInitialWindows(): Promise<void> {
   mainLog.info(`Created window for first workspace: ${workspaces[0].name}`)
 }
 
-async function runStartupStep(name: string, step: () => void | Promise<void>): Promise<void> {
-  try {
-    await step()
-  } catch (error) {
-    if (error instanceof Error) {
-      mainLog.error(`[startup] ${name} failed: ${error.message}`, error.stack)
-    } else {
-      mainLog.error(`[startup] ${name} failed:`, error)
-    }
-  }
-}
-
 app.whenReady().then(async () => {
-  // Non-critical startup steps are isolated so an individual failure doesn't block window creation.
+  // Export packaged state as env var so logger.ts (and headless Bun) don't need 'electron'
+  process.env.CRAFT_IS_PACKAGED = app.isPackaged ? 'true' : 'false'
+
   await runStartupStep('set bundled assets root', () => {
-    // Register bundled assets root so all seeding functions can find their files
-    // (docs, permissions, themes, tool-icons resolve via getBundledAssetsDir)
     setBundledAssetsRoot(__dirname)
   })
   await runStartupStep('initialize backend runtime', () => {
-    // Initialize backend runtime bootstrapping (Codex vendor root, Claude SDK runtime paths).
     initializeBackendHostRuntime({
       hostRuntime: {
         appRootPath: app.isPackaged ? app.getAppPath() : process.cwd(),
@@ -337,8 +356,6 @@ app.whenReady().then(async () => {
     })
   })
   await runStartupStep('set powershell validator root', () => {
-    // Register PowerShell validator root so it can find the bundled parser script
-    // (Windows only: validates PowerShell commands in Explore mode using AST analysis)
     setPowerShellValidatorRoot(join(__dirname, 'resources'))
   })
   await runStartupStep('initialize docs', () => {
@@ -348,19 +365,15 @@ app.whenReady().then(async () => {
     initializeReleaseNotes()
   })
   await runStartupStep('ensure default permissions', () => {
-    // Ensure default permissions file exists (copies bundled default.json on first run)
     ensureDefaultPermissions()
   })
   await runStartupStep('ensure tool icons', () => {
-    // Seed tool icons to ~/.craft-agent/tool-icons/ (copies bundled SVGs on first run)
     ensureToolIcons()
   })
   await runStartupStep('ensure preset themes', () => {
-    // Seed preset themes to ~/.craft-agent/themes/ (copies bundled theme JSONs on first run)
     ensurePresetThemes()
   })
   await runStartupStep('register thumbnail handler', () => {
-    // Register thumbnail:// protocol handler (scheme was registered earlier, before app.whenReady)
     registerThumbnailHandler()
   })
 
@@ -401,96 +414,333 @@ app.whenReady().then(async () => {
     // Create the application menu (needs windowManager for New Window action)
     createApplicationMenu(windowManager)
 
-    // Initialize session manager
-    sessionManager = new SessionManager()
-    sessionManager.setWindowManager(windowManager)
+    // When CRAFT_SERVER_URL is set, this Electron instance is a thin client —
+    // it only creates windows whose preload connects to the remote server.
+    // Skip server-side initialization (SessionManager, model refresh, platform injection).
+    const isClientOnly = !!process.env.CRAFT_SERVER_URL
+    const isHeadless = !!process.env.CRAFT_HEADLESS
 
-    // Initialize notification service
-    initNotificationService(windowManager)
+    // Initialize session manager (server-side only — thin client delegates to remote server)
+    let modelRefreshService: ReturnType<typeof initModelRefreshService> | null = null
+    if (!isClientOnly) {
+      sessionManager = new SessionManager()
 
-    // Restore persisted Git Bash path on Windows (must happen before any SDK subprocess spawn)
-    if (process.platform === 'win32') {
-      const { getGitBashPath, clearGitBashPath } = await import('@craft-agent/shared/config')
-      const gitBashPath = getGitBashPath()
-      if (gitBashPath) {
-        const validation = await validateGitBashPath(gitBashPath)
-        if (validation.valid) {
-          process.env.CLAUDE_CODE_GIT_BASH_PATH = validation.path
-        } else {
-          clearGitBashPath()
-          delete process.env.CLAUDE_CODE_GIT_BASH_PATH
-          mainLog.warn(`Cleared invalid persisted Git Bash path: ${gitBashPath}`)
+      // Restore persisted Git Bash path on Windows (must happen before any SDK subprocess spawn)
+      if (process.platform === 'win32') {
+        const { getGitBashPath, clearGitBashPath } = await import('@craft-agent/shared/config')
+        const gitBashPath = getGitBashPath()
+        if (gitBashPath) {
+          const validation = await validateGitBashPath(gitBashPath)
+          if (validation.valid) {
+            process.env.CLAUDE_CODE_GIT_BASH_PATH = validation.path
+          } else {
+            clearGitBashPath()
+            delete process.env.CLAUDE_CODE_GIT_BASH_PATH
+            mainLog.warn(`Cleared invalid persisted Git Bash path: ${gitBashPath}`)
+          }
         }
       }
+
+      // Initialize model refresh service BEFORE IPC handlers —
+      // getModelRefreshService() is called from IPC handlers, so it must be ready
+      // before any renderer can send messages.
+      modelRefreshService = initModelRefreshService(async (slug: string) => {
+        const { getCredentialManager } = await import('@craft-agent/shared/credentials')
+        const manager = getCredentialManager()
+        const [apiKey, oauth] = await Promise.all([
+          manager.getLlmApiKey(slug).catch(() => null),
+          manager.getLlmOAuth(slug).catch(() => null),
+        ])
+        return {
+          apiKey: apiKey ?? undefined,
+          oauthAccessToken: oauth?.accessToken,
+          oauthRefreshToken: oauth?.refreshToken,
+          oauthIdToken: oauth?.idToken,
+        }
+      })
     }
 
-    // Initialize model refresh service BEFORE IPC handlers —
-    // getModelRefreshService() is called from IPC handlers, so it must be ready
-    // before any renderer can send messages. The credential resolver uses lazy
-    // import() so it doesn't depend on session manager being initialized first.
-    const modelRefreshService = initModelRefreshService(async (slug: string) => {
-      const { getCredentialManager } = await import('@craft-agent/shared/credentials')
-      const manager = getCredentialManager()
-      const [apiKey, oauth] = await Promise.all([
-        manager.getLlmApiKey(slug).catch(() => null),
-        manager.getLlmOAuth(slug).catch(() => null),
-      ])
-      return {
-        apiKey: apiKey ?? undefined,
-        oauthAccessToken: oauth?.accessToken,
-        oauthRefreshToken: oauth?.refreshToken,
-        oauthIdToken: oauth?.idToken,
-      }
-    })
+    // Initialize notification service (always — triggered by server push events)
+    initNotificationService(windowManager)
 
     // Initialize browser pane manager
     browserPaneManager = new BrowserPaneManager()
     browserPaneManager.setWindowManager(windowManager)
     browserPaneManager.registerToolbarIpc()
-    sessionManager.setBrowserPaneManager(browserPaneManager)
+    sessionManager?.setBrowserPaneManager(browserPaneManager)
 
-    // Register IPC handlers (must happen before window creation)
-    registerIpcHandlers(sessionManager, windowManager, browserPaneManager)
+    // Build real PlatformServices from Electron APIs
+    const platform: PlatformServices = {
+      appRootPath: app.isPackaged ? app.getAppPath() : process.cwd(),
+      resourcesPath: process.resourcesPath,
+      isPackaged: app.isPackaged,
+      appVersion: app.getVersion(),
+      openExternal: (url) => shell.openExternal(url),
+      openPath: (p) => shell.openPath(p).then(() => {}),
+      showItemInFolder: (p) => shell.showItemInFolder(p),
+      quit: () => app.quit(),
+      systemDarkMode: () => nativeTheme.shouldUseDarkColors,
+      imageProcessor: {
+        async getMetadata(buffer) {
+          const img = nativeImage.createFromBuffer(buffer)
+          if (img.isEmpty()) return null
+          const { width, height } = img.getSize()
+          return (width && height) ? { width, height } : null
+        },
+        async process(input, opts = {}) {
+          const img = typeof input === 'string'
+            ? nativeImage.createFromPath(input)
+            : nativeImage.createFromBuffer(input)
+          if (img.isEmpty()) throw new Error('Invalid image input')
 
-    // Create initial windows (restores from saved state or opens first workspace)
-    await createInitialWindows()
-
-    // Initialize auth (must happen after window creation for error reporting)
-    await sessionManager.initialize()
-
-    // Start the mobile gateway so Expo clients can pair against this runtime.
-    try {
-      mobileGatewayController = createMobileGatewayController(sessionManager)
-      await mobileGatewayController.start()
-    } catch (err) {
-      if (err instanceof Error) {
-        mainLog.error('Failed to start mobile gateway:', err.message, err.stack)
-      } else {
-        mainLog.error('Failed to start mobile gateway:', err)
-      }
-      mobileGatewayController = null
+          let result = img
+          if (opts.resize) {
+            const { width: tw, height: th } = opts.resize
+            const fit = opts.fit ?? 'inside'
+            if (fit === 'inside') {
+              const { width: sw, height: sh } = result.getSize()
+              const scale = Math.min(tw / sw, th / sh, 1)
+              result = result.resize({
+                width: Math.round(sw * scale),
+                height: Math.round(sh * scale),
+              })
+            } else {
+              result = result.resize({ width: tw, height: th })
+            }
+          }
+          return (opts.format === 'jpeg')
+            ? result.toJPEG(opts.quality ?? 90)
+            : result.toPNG()
+        },
+      },
+      logger: log,
+      isDebugMode,
+      getLogFilePath,
+      captureError: (err) => Sentry.captureException(err),
     }
 
-    // Start periodic model refresh after auth is initialized
-    modelRefreshService.startAll()
+    // Inject platform into server-side subsystems (skip in thin-client mode)
+    if (!isClientOnly) {
+      setFetcherPlatform(platform)
+      setSessionPlatform(platform)
+      const { onSessionStarted, onSessionStopped } = await import('./power-manager')
+      setSessionRuntimeHooks({
+        updateBadgeCount,
+        onSessionStarted,
+        onSessionStopped,
+        captureException: (error, context) => {
+          Sentry.captureException(error instanceof Error ? error : new Error(String(error)), {
+            tags: {
+              ...(context?.errorSource ? { errorSource: context.errorSource } : {}),
+              ...(context?.sessionId ? { sessionId: context.sessionId } : {}),
+            },
+          })
+        },
+      })
+      setSearchPlatform(platform)
+      setImageProcessor(platform.imageProcessor)
+    }
+
+    // Bootstrap IPC handlers — preload uses sendSync for window-local details
+    ipcMain.on('__get-web-contents-id', (e) => {
+      e.returnValue = e.sender.id
+    })
+    ipcMain.on('__get-workspace-id', (e) => {
+      e.returnValue = windowManager?.getWorkspaceForWindow(e.sender.id) ?? ''
+    })
+
+    // Transport diagnostics bridge — preload reports remote WS connection state changes
+    // so failures are visible in terminal/main.log (not only renderer console).
+    ipcMain.on('__transport:status', (_event, payload: unknown) => {
+      if (!payload || typeof payload !== 'object') return
+      const p = payload as {
+        level?: 'info' | 'warn' | 'error'
+        message?: string
+        status?: string
+        attempt?: number
+        nextRetryInMs?: number
+        error?: unknown
+        close?: unknown
+        url?: string
+      }
+
+      const level = p.level ?? 'info'
+      const message = p.message ?? '[transport] status update'
+      const context = {
+        status: p.status,
+        attempt: p.attempt,
+        nextRetryInMs: p.nextRetryInMs,
+        error: p.error,
+        close: p.close,
+        url: p.url,
+      }
+
+      if (level === 'error') {
+        mainLog.error(message, context)
+      } else if (level === 'warn') {
+        mainLog.warn(message, context)
+      } else {
+        mainLog.info(message, context)
+      }
+    })
+
+    // Dialog bridge — preload capability handlers use ipcRenderer.invoke to
+    // call main-process-only dialog APIs (dialog, BrowserWindow).
+    ipcMain.handle('__dialog:showMessageBox', async (event, spec) => {
+      const win = BrowserWindow.fromWebContents(event.sender)
+        || BrowserWindow.getFocusedWindow()
+        || BrowserWindow.getAllWindows()[0]
+      const result = await dialog.showMessageBox(win, spec)
+      return { response: result.response }
+    })
+    ipcMain.handle('__dialog:showOpenDialog', async (event, spec) => {
+      const win = BrowserWindow.fromWebContents(event.sender)
+        || BrowserWindow.getFocusedWindow()
+        || BrowserWindow.getAllWindows()[0]
+      const result = await dialog.showOpenDialog(win, spec)
+      return { canceled: result.canceled, filePaths: result.filePaths }
+    })
+
+    if (!isClientOnly) {
+      // Create WS RPC server (local WebSocket transport)
+      // CRAFT_RPC_HOST / CRAFT_RPC_PORT allow binding to a custom address for remote access.
+      const rpcHost = process.env.CRAFT_RPC_HOST ?? '127.0.0.1'
+      const rpcPort = process.env.CRAFT_RPC_PORT ? parseInt(process.env.CRAFT_RPC_PORT, 10) : 0
+
+      const clientMap = new Map<number, string>()
+      const resolveClientId = (wcId: number) => clientMap.get(wcId)
+      const localToken = randomUUID()
+
+      const wsServer = new WsRpcServer({
+        host: rpcHost,
+        port: rpcPort,
+        requireAuth: true,
+        validateToken: async (t) => t === localToken,
+        serverId: 'local',
+        onClientConnected: ({ clientId, webContentsId }) => {
+          if (webContentsId != null) clientMap.set(webContentsId, clientId)
+        },
+        onClientDisconnected: (clientId) => {
+          for (const [wcId, cId] of clientMap) {
+            if (cId === clientId) { clientMap.delete(wcId); break }
+          }
+          cleanupSessionFileWatchForClient(clientId)
+        },
+      })
+      await wsServer.listen()
+      const server: RpcServer = wsServer
+      mainLog.info(`WS RPC server listening on ${rpcHost}:${wsServer.port}`)
+
+      // In headless mode, print connection details so a remote client can connect
+      if (isHeadless) {
+        console.log(`CRAFT_SERVER_URL=ws://${rpcHost}:${wsServer.port}`)
+        console.log(`CRAFT_SERVER_TOKEN=${localToken}`)
+      }
+
+      // Module-level EventSink/client resolver — used by deep-link handlers defined before app.whenReady
+      moduleSink = server.push.bind(server)
+      moduleClientResolver = resolveClientId
+
+      // Bootstrap IPC handlers — preload uses sendSync to get WS connection details
+      ipcMain.on('__get-ws-port', (e) => {
+        e.returnValue = wsServer.port
+      })
+      ipcMain.on('__get-ws-token', (e) => {
+        e.returnValue = localToken
+      })
+
+      oauthFlowStore = new OAuthFlowStore()
+
+      // Ensure global config.json exists before handlers can be called.
+      // In GUI mode, createInitialWindows() also ensures this, but in headless
+      // mode that function is skipped — so we must do it here.
+      if (!loadStoredConfig()) {
+        saveConfig({ workspaces: [], activeWorkspaceId: null, activeSessionId: null })
+        mainLog.info('Initialized missing global config')
+      }
+
+      const deps: HandlerDeps = {
+        sessionManager: sessionManager!,
+        platform,
+        windowManager,
+        browserPaneManager,
+        oauthFlowStore,
+      }
+
+      // Register RPC handlers (must happen before window creation)
+      registerAllRpcHandlers(server, deps)
+
+      // Re-register Orchestra desktop-only IPC surfaces that have not yet been
+      // lifted into WS/RPC channels (vault notes, local whisper, etc.).
+      // These stay local to the Electron host while the main session transport
+      // uses the upstream WS/RPC architecture.
+      if (!isHeadless) {
+        registerIpcHandlers(sessionManager as any, windowManager, browserPaneManager)
+      }
+
+      // Wire EventSink so SessionManager pushes events via the RPC server
+      sessionManager!.setEventSink(server.push.bind(server))
+
+      // Wire EventSink to services that broadcast events to renderers
+      // Must happen BEFORE createInitialWindows() so event handlers use WS from the start
+      windowManager.setRpcEventSink(moduleSink!, resolveClientId)
+      const { setMenuEventSink } = await import('./menu')
+      setMenuEventSink(moduleSink!, resolveClientId)
+      const { setNotificationEventSink } = await import('./notifications')
+      setNotificationEventSink(moduleSink!, resolveClientId)
+
+      // Initialize auth (must happen after window creation for error reporting)
+      await sessionManager!.initialize()
+
+      // Start periodic model refresh after auth is initialized
+      modelRefreshService!.startAll()
+    }
+
+    if (!isClientOnly && !isHeadless && sessionManager) {
+      try {
+        mobileGatewayController = createMobileGatewayController(sessionManager)
+        await mobileGatewayController.start()
+      } catch (err) {
+        if (err instanceof Error) {
+          mainLog.error('Failed to start mobile gateway:', err.message, err.stack)
+        } else {
+          mainLog.error('Failed to start mobile gateway:', err)
+        }
+        mobileGatewayController = null
+      }
+    }
+
+    // Create initial windows (restores from saved state or opens first workspace)
+    // In headless mode the server runs without any UI — skip window creation.
+    if (!isHeadless) {
+      await createInitialWindows()
+    }
 
     // Run credential health check at startup to detect issues early
     // (corruption, machine migration, missing credentials for default connection)
-    try {
-      const { getCredentialManager } = await import('@craft-agent/shared/credentials')
-      const credentialManager = getCredentialManager()
-      const health = await credentialManager.checkHealth()
-      if (!health.healthy) {
-        mainLog.warn('Credential health check failed:', health.issues)
-        // Issues will be displayed in Settings → AI when user navigates there
+    // Skip in thin-client mode — credentials are managed by the remote server.
+    if (!isClientOnly) {
+      try {
+        const { getCredentialManager } = await import('@craft-agent/shared/credentials')
+        const credentialManager = getCredentialManager()
+        const health = await credentialManager.checkHealth()
+        if (!health.healthy) {
+          mainLog.warn('Credential health check failed:', health.issues)
+          // Issues will be displayed in Settings → AI when user navigates there
+        }
+      } catch (err) {
+        mainLog.error('Credential health check error:', err)
       }
-    } catch (err) {
-      mainLog.error('Credential health check error:', err)
     }
 
     // Initialize power manager (loads setting, must happen after config is available)
-    const { initPowerManager } = await import('./power-manager')
-    await initPowerManager()
+    // Non-critical — powerSaveBlocker may not work on headless/xvfb setups
+    try {
+      const { initPowerManager } = await import('./power-manager')
+      await initPowerManager()
+    } catch (err) {
+      mainLog.warn('[power] Power manager init failed (non-critical):', err instanceof Error ? err.message : err)
+    }
 
     // Set Sentry context tags for error grouping (no PII — just config classification).
     // Runs after init so config and auth state are available.
@@ -511,7 +761,7 @@ app.whenReady().then(async () => {
 
     // Initialize auto-update (check immediately on launch)
     // Skip in dev mode to avoid replacing /Applications app and launching it instead
-    setAutoUpdateWindowManager(windowManager)
+    if (moduleSink) setAutoUpdateEventSink(moduleSink)
     if (app.isPackaged) {
       checkForUpdatesOnLaunch().catch(err => {
         mainLog.error('[auto-update] Launch check failed:', err)
@@ -523,7 +773,7 @@ app.whenReady().then(async () => {
     // Process pending deep link from cold start
     if (pendingDeepLink) {
       mainLog.info('Processing pending deep link:', pendingDeepLink)
-      await handleDeepLink(pendingDeepLink, windowManager)
+      await handleDeepLink(pendingDeepLink, windowManager, moduleSink ?? undefined, moduleClientResolver ?? undefined)
       pendingDeepLink = null
     }
 
@@ -532,7 +782,7 @@ app.whenReady().then(async () => {
       mainLog.info('Debug mode enabled - logs at:', getLogFilePath())
     }
   } catch (error) {
-    mainLog.error('Failed to initialize app:', error)
+    mainLog.error('Failed to initialize app:', error instanceof Error ? error.message : error, (error as any)?.stack)
     // Continue anyway - the app will show errors in the UI
   }
 
@@ -553,12 +803,10 @@ app.whenReady().then(async () => {
       }
     }
   })
-}).catch((error) => {
-  // Prevent silent startup failures in packaged builds when no window has been created yet.
-  mainLog.error('Fatal startup failure in app.whenReady():', error)
 })
 
 app.on('window-all-closed', () => {
+  if (process.env.CRAFT_HEADLESS) return  // headless server stays alive
   // On macOS, apps typically stay active until explicitly quit
   if (process.platform !== 'darwin') {
     app.quit()
@@ -612,23 +860,13 @@ app.on('before-quit', async (event) => {
       browserPaneManager.destroyAll()
     }
 
+    // Clean up OAuth flow store (stop periodic cleanup timer)
+    if (oauthFlowStore) {
+      oauthFlowStore.dispose()
+    }
+
     // Stop all model refresh timers
     getModelRefreshService().stopAll()
-
-    // Stop mobile gateway listener for a clean shutdown.
-    if (mobileGatewayController) {
-      try {
-        await mobileGatewayController.stop()
-      } catch (error) {
-        if (error instanceof Error) {
-          mainLog.error('Failed to stop mobile gateway:', error.message, error.stack)
-        } else {
-          mainLog.error('Failed to stop mobile gateway:', error)
-        }
-      } finally {
-        mobileGatewayController = null
-      }
-    }
 
     // Clean up power manager (release power blocker)
     const { cleanup: cleanupPowerManager } = await import('./power-manager')
@@ -655,11 +893,6 @@ process.on('uncaughtException', (error) => {
 })
 
 process.on('unhandledRejection', (reason, promise) => {
-  const serializedPromise = inspect(promise, { depth: 2, breakLength: 120 })
-  const serializedReason = reason instanceof Error
-    ? `${reason.name}: ${reason.message}\n${reason.stack ?? ''}`
-    : inspect(reason, { depth: 5, breakLength: 120 })
-
-  mainLog.error('Unhandled rejection at:', serializedPromise, 'reason:', serializedReason)
-  Sentry.captureException(reason instanceof Error ? reason : new Error(serializedReason))
+  mainLog.error('Unhandled rejection at:', promise, 'reason:', reason)
+  Sentry.captureException(reason instanceof Error ? reason : new Error(String(reason)))
 })

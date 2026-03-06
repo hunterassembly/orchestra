@@ -535,6 +535,7 @@ export default function AiSettingsPage() {
     baseUrl?: string
     connectionDefaultModel?: string
     activePreset?: string
+    models?: string[]
   } | undefined>(undefined)
   const setFullscreenOverlayOpen = useSetAtom(fullscreenOverlayOpenAtom)
 
@@ -690,7 +691,7 @@ export default function AiSettingsPage() {
           : connection.providerType === 'pi'
             ? (connection.piAuthProvider === 'github-copilot' ? 'pi_copilot_oauth' : 'pi_chatgpt_oauth')
             : 'claude_oauth'
-      apiSetupOnboarding.handleStartOAuth(method)
+      apiSetupOnboarding.handleStartOAuth(method, connection.slug)
     }
   }, [apiSetupOnboarding, openApiSetup])
 
@@ -709,11 +710,16 @@ export default function AiSettingsPage() {
       .join(', ') || connection.defaultModel || ''
 
     // Set initial values before opening overlay so ApiKeyInput mounts with them
+    const modelIds = connection.models
+      ?.map((m: string | ModelDefinition) => typeof m === 'string' ? m : m.id)
+      .filter(Boolean)
+
     setEditInitialValues({
       apiKey,
       baseUrl: connection.baseUrl,
       connectionDefaultModel: modelStr,
       activePreset: connection.piAuthProvider || undefined,
+      models: modelIds,
     })
 
     // Open overlay and jump directly to credentials step (no reset — jumpToCredentials sets state)

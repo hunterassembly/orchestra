@@ -19,8 +19,8 @@ import {
 } from '@craft-agent/mobile-gateway'
 
 import type { CreateSessionOptions, Message, SendMessageOptions, Session } from '../shared/types'
+import type { SessionManager } from '@craft-agent/server-core/sessions'
 import { mainLog } from './logger'
-import type { SessionManager } from './sessions'
 
 const DEFAULT_MOBILE_GATEWAY_HOST = '0.0.0.0'
 const DEFAULT_MOBILE_GATEWAY_PORT = 7842

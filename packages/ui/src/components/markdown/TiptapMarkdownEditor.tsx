@@ -1,6 +1,7 @@
 import * as React from 'react'
 import { useEditor, EditorContent } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
+import { Mathematics } from '@tiptap/extension-mathematics'
 import Link from '@tiptap/extension-link'
 import Placeholder from '@tiptap/extension-placeholder'
 import { Markdown, type MarkdownStorage } from 'tiptap-markdown'
@@ -12,9 +13,60 @@ import { cn } from '../../lib/utils'
 import 'katex/dist/katex.min.css'
 import './tiptap-editor.css'
 
+export type MarkdownEngine = 'legacy' | 'official'
+
 const BLOCK_DRAG_MIME = 'application/x-orchestra-note-block'
 const BLOCK_SELECTOR = '.tiptap-prose p, .tiptap-prose h1, .tiptap-prose h2, .tiptap-prose h3, .tiptap-prose ul, .tiptap-prose ol, .tiptap-prose blockquote, .tiptap-prose pre, .tiptap-prose hr, .tiptap-prose .tiptap-task-card'
 const DND_DEBUG = true
+const MERMAID_FILE_EXTENSIONS = new Set(['mmd', 'mermaid'])
+const MERMAID_DIAGRAM_PREFIXES = [
+  'graph ',
+  'flowchart ',
+  'sequenceDiagram',
+  'classDiagram',
+  'stateDiagram',
+  'stateDiagram-v2',
+  'erDiagram',
+  'journey',
+  'gantt',
+  'pie',
+  'mindmap',
+  'timeline',
+]
+
+export function preprocessMarkdownForOfficial(markdown: string): string {
+  return markdown
+}
+
+export function postprocessMarkdownFromOfficial(markdown: string): string {
+  return markdown
+}
+
+export function isMermaidFilename(fileName: string): boolean {
+  const ext = fileName.toLowerCase().split('.').pop()
+  return ext != null && MERMAID_FILE_EXTENSIONS.has(ext)
+}
+
+export function extractMermaidSource(text: string): string | null {
+  const trimmed = text.trim()
+  if (!trimmed) return null
+
+  const fenced = trimmed.match(/^```mermaid\s*\n([\s\S]*?)\n```$/i)
+  if (fenced?.[1]) {
+    const source = fenced[1].trim()
+    return source.length > 0 ? source : null
+  }
+
+  const lines = trimmed.split('\n')
+  const firstMeaningful = lines
+    .map(line => line.trim())
+    .find((line) => line.length > 0 && !line.startsWith('%%'))
+
+  if (!firstMeaningful) return null
+
+  const looksLikeMermaid = MERMAID_DIAGRAM_PREFIXES.some(prefix => firstMeaningful.startsWith(prefix))
+  return looksLikeMermaid ? trimmed : null
+}
 
 function dndLog(...args: unknown[]) {
   if (!DND_DEBUG) return
@@ -64,6 +116,7 @@ export interface TiptapMarkdownEditorProps {
   className?: string
   /** Whether the editor is editable */
   editable?: boolean
+  markdownEngine?: MarkdownEngine
   /** Optional wiki-link suggestions shown when typing [[ */
   wikiLinkSuggestions?: Array<{ label: string; value?: string; subtitle?: string }>
   /** Called when a rendered wiki link (note://...) is clicked. */
@@ -76,9 +129,11 @@ export function TiptapMarkdownEditor({
   placeholder = 'Write something...',
   className,
   editable = true,
+  markdownEngine = 'legacy',
   wikiLinkSuggestions = [],
   onWikiLinkNavigate,
 }: TiptapMarkdownEditorProps) {
+  void markdownEngine
   const onUpdateRef = React.useRef(onUpdate)
   onUpdateRef.current = onUpdate
   const [slashOpen, setSlashOpen] = React.useState(false)
@@ -121,6 +176,12 @@ export function TiptapMarkdownEditor({
       }),
       tiptapCodeBlock.configure({
         themes: { light: 'github-light', dark: 'github-dark' },
+      }),
+      Mathematics.configure({
+        katexOptions: {
+          throwOnError: false,
+          strict: false,
+        },
       }),
       Link.configure({
         openOnClick: false,

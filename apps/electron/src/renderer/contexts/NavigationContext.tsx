@@ -107,10 +107,20 @@ interface NavigationProviderProps {
   children: ReactNode
   /** Current workspace ID */
   workspaceId: string | null
+  /** Workspace slug for deep-linking and workspace switching compatibility */
+  workspaceSlug?: string | null
   /** Session creation handler */
   onCreateSession: (workspaceId: string, options?: import('../../shared/types').CreateSessionOptions) => Promise<Session>
+  /** Workspace switch callback for slug-based navigation compatibility */
+  onSwitchWorkspaceBySlug?: (slug: string) => void
+  /** Draft accessor used by legacy navigation flows */
+  getDraft?: (sessionId: string) => string
+  /** Cleanup hook for empty sessions created during navigation */
+  onAutoDeleteEmptySession?: (sessionId: string) => void | Promise<void>
   /** Input change handler for pre-filling chat input */
   onInputChange?: (sessionId: string, value: string) => void
+  /** Session readiness flag used by older navigation entry points */
+  isSessionsReady?: boolean
   /** Whether the app is ready to navigate */
   isReady?: boolean
 }

@@ -342,7 +342,7 @@ export class ClaudeAgent extends BaseAgent {
   private safeMode: boolean = false;
   // Event adapter for SDK message → AgentEvent conversion (testable, pluggable)
   private eventAdapter!: ClaudeEventAdapter;
-  // Thinking level and ultrathink override are now managed by BaseAgent
+  // Thinking level is managed by BaseAgent
   // Pinned system prompt components (captured on first chat, used for consistency after compaction)
   private pinnedPreferencesPrompt: string | null = null;
   // Track if preference drift notification has been shown this session
@@ -536,7 +536,7 @@ export class ClaudeAgent extends BaseAgent {
   }
 
   // Config watcher methods (startConfigWatcher, stopConfigWatcher) are now inherited from BaseAgent
-  // Thinking level methods (setThinkingLevel, getThinkingLevel, setUltrathinkOverride) are now inherited from BaseAgent
+  // Thinking level methods (setThinkingLevel, getThinkingLevel) are inherited from BaseAgent
 
   // Permission command utilities (getBaseCommand, isDangerousCommand, extractDomainFromNetworkCommand)
   // are now available via this.permissionManager
@@ -730,11 +730,8 @@ export class ClaudeAgent extends BaseAgent {
         debug(`[chat] Custom provider: baseUrl=${activeBaseUrl}, model=${model}, hasApiKey=${!!process.env.ANTHROPIC_API_KEY}`);
       }
 
-      // Determine effective thinking level: ultrathink override boosts to max for this message
-      // Uses inherited protected fields from BaseAgent
-      const effectiveThinkingLevel: ThinkingLevel = this._ultrathinkOverride ? 'max' : this._thinkingLevel;
-      const thinkingTokens = getThinkingTokens(effectiveThinkingLevel, model);
-      debug(`[chat] Thinking: level=${this._thinkingLevel}, override=${this._ultrathinkOverride}, effective=${effectiveThinkingLevel}, tokens=${thinkingTokens}`);
+      const thinkingTokens = getThinkingTokens(this._thinkingLevel, model);
+      debug(`[chat] Thinking: level=${this._thinkingLevel}, tokens=${thinkingTokens}`);
 
       // NOTE: Parent-child tracking for subagents is documented below (search for
       // "PARENT-CHILD TOOL TRACKING"). The SDK's parent_tool_use_id is authoritative.
@@ -773,7 +770,7 @@ export class ClaudeAgent extends BaseAgent {
             this.lastStderrOutput.shift();
           }
         },
-        // Extended thinking: tokens based on effective thinking level (session level + ultrathink override)
+        // Extended thinking: tokens based on session thinking level
         // Non-Claude models don't support extended thinking, so pass 0 to disable
         // Mini agents also disable thinking for efficiency (quick config edits don't need deep reasoning)
         maxThinkingTokens: miniConfig.minimizeThinking ? 0 : (isClaude ? thinkingTokens : 0),
@@ -1328,7 +1325,7 @@ export class ClaudeAgent extends BaseAgent {
 
         // Defensive: flush any pending text that wasn't emitted
         // This can happen if the SDK sends an assistant message with text but skips the
-        // message_delta event that normally triggers text_complete (e.g., in some ultrathink scenarios)
+        // message_delta event that normally triggers text_complete (rare edge scenarios)
         const flushedEvent = this.eventAdapter.flushPending();
         if (flushedEvent) {
           yield flushedEvent;
@@ -1490,6 +1487,7 @@ export class ClaudeAgent extends BaseAgent {
             console.error('[ClaudeAgent] SDK session expired server-side, clearing and retrying fresh');
             debug('[ClaudeAgent] SDK session expired server-side, clearing and retrying fresh');
             this.sessionId = null;
+            this.config.onSdkSessionIdCleared?.(); // persist cleared ID to JSONL header
             // Clear pinned state so retry captures fresh values
             this.pinnedPreferencesPrompt = null;
             this.preferencesDriftNotified = false;
@@ -1505,6 +1503,28 @@ export class ClaudeAgent extends BaseAgent {
           if (windowsSkillsError) {
             yield windowsSkillsError;
             yield { type: 'complete' };
+            return;
+          }
+
+          // Detect spawn ENOENT — Node.js error when the SDK subprocess binary has
+          // been moved/deleted (e.g., during app bundle swap on auto-update).
+          // Structured fields first (precise), regex fallback for stringified stderr.
+          const spawnError = sdkError as NodeJS.ErrnoException;
+          const isSpawnEnoent =
+            (spawnError.code === 'ENOENT' && spawnError.syscall?.startsWith('spawn')) ||
+            /\bspawn\b[\s\S]*\bENOENT\b/.test(stderrContext || '') ||
+            /\bspawn\b[\s\S]*\bENOENT\b/.test(rawErrorMsg || '');
+
+          if (isSpawnEnoent && !_isRetry) {
+            console.error('[ClaudeAgent] spawn ENOENT detected, retrying in 2s', {
+              sessionId: this.config.session?.id,
+              errorCode: spawnError.code,
+              errorSyscall: spawnError.syscall,
+              stderr: (stderrContext || '').slice(0, 200),
+            });
+            yield { type: 'info', message: 'Reconnecting after update...' };
+            await new Promise(r => setTimeout(r, 2000));
+            yield* this.chat(userMessage, attachments, { isRetry: true });
             return;
           }
 
@@ -1628,9 +1648,6 @@ export class ClaudeAgent extends BaseAgent {
       yield { type: 'complete' };
     } finally {
       this.currentQuery = null;
-      // Reset ultrathink override after query completes (single-shot per-message boost)
-      // Note: thinkingLevel is NOT reset - it's sticky for the session
-      this._ultrathinkOverride = false;
 
       // If a steer message was never delivered (no PreToolUse fired), notify the session
       // layer so it can re-queue the message for the next turn.
@@ -1932,6 +1949,21 @@ export class ClaudeAgent extends BaseAgent {
         ],
         canRetry: true,
         retryDelayMs: 2000,
+      },
+      'max_output_tokens': {
+        code: 'invalid_request',
+        title: 'Response Too Large',
+        message: 'The model stopped because it hit the maximum output token limit.',
+        details: [
+          'Try asking for a smaller response',
+          'Break the task into smaller steps',
+          'Retry after narrowing the scope of the request',
+        ],
+        actions: [
+          { key: 'r', label: 'Retry', action: 'retry' },
+        ],
+        canRetry: true,
+        retryDelayMs: 1000,
       },
       'unknown': {
         code: 'unknown_error',
@@ -2263,30 +2295,61 @@ export class ClaudeAgent extends BaseAgent {
       tools: { type: 'preset', preset: 'claude_code' },
     };
 
+    const BRANCH_PREFLIGHT_TIMEOUT = 15_000;
     let capturedSessionId: string | null = null;
     let preflightQuery: Query | null = null;
+    let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
 
     try {
       preflightQuery = query({ prompt: ' ', options });
 
-      for await (const msg of preflightQuery) {
-        if ('session_id' in msg && msg.session_id) {
-          capturedSessionId = msg.session_id;
-          break;
+      capturedSessionId = await Promise.race([
+        (async () => {
+          for await (const msg of preflightQuery!) {
+            if ('session_id' in msg && msg.session_id) return msg.session_id;
+          }
+          return null;
+        })(),
+        new Promise<never>((_, reject) => {
+          timeoutHandle = setTimeout(
+            () => reject(new Error('Branch preflight timed out after 15s')),
+            BRANCH_PREFLIGHT_TIMEOUT
+          );
+        }),
+      ]);
+    } catch (error) {
+      // On error/timeout: interrupt() is needed to kill the SDK subprocess
+      // and stop the detached async iterator. Race it against a 2s timeout
+      // so a stuck subprocess can't block the catch path indefinitely.
+      if (preflightQuery) {
+        // Temporarily suppress ERR_STREAM_WRITE_AFTER_END that the SDK may
+        // emit during interrupt — it has no stdin error handler (SDK bug).
+        const suppress = (err: Error & { code?: string }) => {
+          if (err.code === 'ERR_STREAM_WRITE_AFTER_END') return;
+          throw err;
+        };
+        process.prependOnceListener('uncaughtException', suppress);
+        try {
+          await Promise.race([
+            preflightQuery.interrupt(),
+            new Promise<void>(r => setTimeout(r, 2000)),
+          ]);
+        } catch {
+          // Best-effort cleanup — ignore errors
+        } finally {
+          process.removeListener('uncaughtException', suppress);
         }
       }
-    } catch (error) {
       throw new Error(
-        `Failed to establish branch context during creation: ${error instanceof Error ? error.message : String(error)}`
+        `Failed to establish branch context: ${error instanceof Error ? error.message : String(error)}`
       );
     } finally {
-      if (preflightQuery) {
-        try {
-          await preflightQuery.interrupt();
-        } catch {
-          // Ignore interrupt errors — query may already be complete.
-        }
-      }
+      if (timeoutHandle) clearTimeout(timeoutHandle);
+      // On SUCCESS: skip interrupt(). The query completed and will clean up
+      // naturally. Calling interrupt() here races with the SDK's internal
+      // stream teardown — if the subprocess exits between the interrupt
+      // request write and stdin.end(), the SDK emits ERR_STREAM_WRITE_AFTER_END
+      // as an uncaught exception (SDK bug: no 'error' handler on processStdin).
     }
 
     if (!capturedSessionId) {

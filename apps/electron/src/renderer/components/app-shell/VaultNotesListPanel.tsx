@@ -86,7 +86,7 @@ export function VaultNotesListPanel({
         type: 'file' as const,
       }
     }))
-    const filtered = mapped.filter((node): node is VaultTreeNode => Boolean(node))
+    const filtered: VaultTreeNode[] = mapped.flatMap(node => (node ? [node] : []))
     return filtered.sort((a, b) => {
       if (a.type !== b.type) return a.type === 'directory' ? -1 : 1
       return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' })

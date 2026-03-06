@@ -3,7 +3,7 @@ import { cn } from '@/lib/utils'
 import { FadingText } from '@/components/ui/fading-text'
 import { SkillAvatar } from '@/components/ui/skill-avatar'
 import { SourceAvatar } from '@/components/ui/source-avatar'
-import type { LoadedSource, FileSearchResult } from '../../../shared/types'
+import type { LoadedSkill, LoadedSource, FileSearchResult } from '../../../shared/types'
 import { AGENTS_PLUGIN_NAME } from '@craft-agent/shared/skills/types'
 
 // ============================================================================
@@ -12,16 +12,34 @@ import { AGENTS_PLUGIN_NAME } from '@craft-agent/shared/skills/types'
 
 export type MentionItemType = 'source' | 'file' | 'folder' | 'skill'
 
-export interface MentionItem {
+interface BaseMentionItem {
   id: string
-  type: MentionItemType
   label: string
   description?: string
-  // Type-specific data
-  skill?: never
-  source?: LoadedSource
-  file?: { path: string; type: 'file' | 'directory'; relativePath: string }
 }
+
+type SourceMentionItem = BaseMentionItem & {
+  type: 'source'
+  source: LoadedSource
+  skill?: never
+  file?: never
+}
+
+type FileMentionItem = BaseMentionItem & {
+  type: 'file' | 'folder'
+  file: { path: string; type: 'file' | 'directory'; relativePath: string }
+  source?: never
+  skill?: never
+}
+
+type SkillMentionItem = BaseMentionItem & {
+  type: 'skill'
+  skill: LoadedSkill
+  source?: never
+  file?: never
+}
+
+export type MentionItem = SourceMentionItem | FileMentionItem | SkillMentionItem
 
 export interface MentionSection {
   id: string
@@ -52,7 +70,7 @@ const MENU_LIST_STYLE = 'max-h-[240px] overflow-y-auto py-1'
 const MENU_ITEM_STYLE = 'flex cursor-pointer select-none items-center gap-3 rounded-[6px] mx-1 px-2 py-1.5 text-[13px]'
 const MENU_ITEM_SELECTED = 'bg-foreground/5'
 // Type badge shown to the right of each item label (e.g. "Skill", "Source")
-const MENU_TYPE_BADGE = 'rounded-[4px] shadow-[0_0_0_1px_var(--shadow-tinted)] shadow-minimal bg-background px-1.5 py-0.5 text-[10px] text-muted-foreground shrink-0'
+const MENU_TYPE_BADGE = 'rounded-[4px] shadow-minimal bg-background px-1.5 py-0.5 text-[10px] text-muted-foreground shrink-0'
 
 // ============================================================================
 // Path utilities
@@ -621,7 +639,7 @@ export function useInlineMention({
         // Use fully-qualified name for skills: [skill:pluginName:slug]
         // Plugin name depends on which tier the skill came from:
         //   workspace → workspaceId, project/global → ".agents"
-        const pluginName = item.skill?.source === 'workspace' ? workspaceId : AGENTS_PLUGIN_NAME
+        const pluginName = item.skill.source === 'workspace' ? workspaceId : AGENTS_PLUGIN_NAME
         const qualifiedName = pluginName ? `${pluginName}:${item.id}` : item.id
         mentionText = `[skill:${qualifiedName}] `
       } else if (item.type === 'source') {

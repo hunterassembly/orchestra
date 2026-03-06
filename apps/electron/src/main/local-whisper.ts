@@ -3,7 +3,8 @@ import { tmpdir } from 'os'
 import { basename, join } from 'path'
 import { existsSync } from 'fs'
 import { homedir } from 'os'
-import { execFile, spawn, type ChildProcessWithoutNullStreams } from 'child_process'
+import { execFile, spawn, type ChildProcessByStdio } from 'child_process'
+import type { Writable, Readable } from 'stream'
 import { promisify } from 'util'
 
 const execFileAsync = promisify(execFile)
@@ -14,7 +15,7 @@ const NATIVE_STOP_TIMEOUT_MS = 5000
 type NativePttSession = {
   tempDir: string
   audioPath: string
-  ffmpegProcess: ChildProcessWithoutNullStreams
+  ffmpegProcess: ChildProcessByStdio<Writable, null, Readable>
 }
 
 let nativePttSession: NativePttSession | null = null

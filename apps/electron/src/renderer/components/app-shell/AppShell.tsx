@@ -907,21 +907,23 @@ function AppShellContent({
 
   // Subscribe to live source updates (when sources are added/removed dynamically)
   React.useEffect(() => {
-    const cleanup = window.electronAPI.onSourcesChanged((updatedSources) => {
+    const cleanup = window.electronAPI.onSourcesChanged((workspaceId, updatedSources) => {
+      if (workspaceId !== activeWorkspaceId) return
       // Clear icon cache so updated source icons are re-fetched on render
       clearSourceIconCaches()
       setSources(updatedSources || [])
     })
     return cleanup
-  }, [])
+  }, [activeWorkspaceId])
 
   // Subscribe to live skill updates (when skills are added/removed dynamically)
   React.useEffect(() => {
-    const cleanup = window.electronAPI.onSkillsChanged((updatedSkills) => {
+    const cleanup = window.electronAPI.onSkillsChanged((workspaceId, updatedSkills) => {
+      if (workspaceId !== activeWorkspaceId) return
       setSkills(updatedSkills || [])
     })
     return cleanup
-  }, [])
+  }, [activeWorkspaceId])
 
   // Handle session source selection changes
   const handleSessionSourcesChange = React.useCallback(async (sessionId: string, sourceSlugs: string[]) => {
@@ -2662,7 +2664,7 @@ function AppShellContent({
           {/* Visual indicator - 2px wide */}
           <div
             className="w-0.5 h-full"
-            style={getResizeGradientStyle(sidebarHandleY)}
+            style={getResizeGradientStyle(sidebarHandleY, resizeHandleRef.current?.clientHeight ?? null)}
           />
         </div>
         )}
@@ -3420,7 +3422,7 @@ function AppShellContent({
             <div className="absolute inset-y-0 -left-1.5 -right-1.5 flex justify-center cursor-col-resize">
               <div
                 className="absolute inset-y-0 left-1/2 -translate-x-1/2 w-0.5"
-                style={getResizeGradientStyle(sessionListHandleY)}
+                style={getResizeGradientStyle(sessionListHandleY, sessionListHandleRef.current?.clientHeight ?? null)}
               />
             </div>
           </div>
@@ -3469,7 +3471,11 @@ function AppShellContent({
                 </div>
               </div>
             ) : (
-              <MainContentPanel isFocusedMode={effectiveFocusMode} onNoteSaved={handleNoteSaved} vaultRootPath={globalVaultRootPath} />
+              <MainContentPanel
+                isSidebarAndNavigatorHidden={effectiveFocusMode}
+                onNoteSaved={handleNoteSaved}
+                vaultRootPath={globalVaultRootPath}
+              />
             )}
           </div>
 
@@ -3494,7 +3500,7 @@ function AppShellContent({
                   <div className="absolute inset-y-0 -left-1.5 -right-1.5 flex justify-center cursor-col-resize">
                     <div
                       className="absolute inset-y-0 left-1/2 -translate-x-1/2 w-0.5"
-                      style={getResizeGradientStyle(rightSidebarHandleY)}
+                      style={getResizeGradientStyle(rightSidebarHandleY, rightSidebarHandleRef.current?.clientHeight ?? null)}
                     />
                   </div>
                 </div>

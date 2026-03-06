@@ -226,15 +226,12 @@ const ultrathinkCommand: SlashCommand = {
   description: 'Extended reasoning for complex problems',
   icon: <Brain className={MENU_ICON_SIZE} />,
 }
-
 export const DEFAULT_SLASH_COMMANDS: SlashCommand[] = [
   ...permissionModeCommands,
-  ultrathinkCommand,
 ]
 
 export const DEFAULT_SLASH_COMMAND_GROUPS: CommandGroup[] = [
   { id: 'modes', commands: permissionModeCommands },
-  { id: 'features', commands: [ultrathinkCommand] },
 ]
 
 // ============================================================================
@@ -610,7 +607,11 @@ export function InlineSlashCommand({
                     )}
                   >
                     <div className="shrink-0">
-                      <SkillAvatar skill={item.skill} size="sm" workspaceId={item.skill.workspaceId || undefined} />
+                      <SkillAvatar
+                        skill={item.skill}
+                        size="sm"
+                        workspaceId={undefined}
+                      />
                     </div>
                     <div className="flex-1 min-w-0">
                       <span className="truncate block">{item.label}</span>
@@ -750,7 +751,6 @@ export function useInlineSlashCommand({
         })),
       })
     }
-
     // Recent folders section - sorted alphabetically by folder name, show all
     if (recentFolders.length > 0) {
       const sortedFolders = [...recentFolders]

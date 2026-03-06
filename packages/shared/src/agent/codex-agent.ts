@@ -2275,8 +2275,7 @@ export class CodexAgent extends BaseAgent {
     if (this.getMiniAgentConfig().minimizeThinking) {
       return 'low';
     }
-    const level = this._ultrathinkOverride ? 'max' : this._thinkingLevel;
-    return THINKING_TO_EFFORT[level] || 'medium';
+    return THINKING_TO_EFFORT[this._thinkingLevel] || 'medium';
   }
 
   // ============================================================

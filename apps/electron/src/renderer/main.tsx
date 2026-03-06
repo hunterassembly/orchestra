@@ -1,8 +1,7 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
-import { init as sentryInit } from '@sentry/electron/renderer'
+import { captureConsoleIntegration, init as sentryInit } from '@sentry/electron/renderer'
 import * as Sentry from '@sentry/react'
-import { captureConsoleIntegration } from '@sentry/react'
 import { Provider as JotaiProvider, useAtomValue } from 'jotai'
 import App from './App'
 import { ThemeProvider } from './context/ThemeContext'
@@ -65,7 +64,6 @@ sentryInit(
       return event
     },
   },
-  Sentry.init,
 )
 
 /**

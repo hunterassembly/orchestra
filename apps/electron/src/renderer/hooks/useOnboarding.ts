@@ -59,7 +59,7 @@ interface UseOnboardingReturn {
 
   // Local model
   handleSubmitLocalModel: (data: LocalModelSubmitData) => void
-  handleStartOAuth: (methodOverride?: ApiSetupMethod) => void
+  handleStartOAuth: (methodOverride?: ApiSetupMethod, connectionSlugOverride?: string) => void
 
   // Claude OAuth (two-step flow)
   isWaitingForCode: boolean
@@ -119,7 +119,14 @@ export function resolveSlugForMethod(
 // Map ApiSetupMethod to LlmConnectionSetup for the new unified connection system
 export function apiSetupMethodToConnectionSetup(
   method: ApiSetupMethod,
-  options: { credential?: string; baseUrl?: string; connectionDefaultModel?: string; models?: string[]; piAuthProvider?: string },
+  options: {
+    credential?: string
+    baseUrl?: string
+    connectionDefaultModel?: string
+    models?: string[]
+    piAuthProvider?: string
+    modelSelectionMode?: 'automaticallySyncedFromProvider' | 'userDefined3Tier'
+  },
   editingSlug: string | null,
   existingSlugs: Set<string>,
 ): LlmConnectionSetup {
@@ -153,6 +160,7 @@ export function apiSetupMethodToConnectionSetup(
         defaultModel: options.connectionDefaultModel,
         models: options.models,
         piAuthProvider: options.piAuthProvider,
+        modelSelectionMode: options.modelSelectionMode,
       }
   }
 }
@@ -206,7 +214,19 @@ export function useOnboarding({
   // Returns true on success, false on failure (sets errorMessage on failure)
   // `methodOverride` lets callers pass the method explicitly to avoid stale-closure issues
   // (e.g. when called from an async OAuth flow whose closure predates the state update).
-  const handleSaveConfig = useCallback(async (credential?: string, options?: { baseUrl?: string; connectionDefaultModel?: string; models?: string[]; piAuthProvider?: string }, methodOverride?: ApiSetupMethod): Promise<boolean> => {
+  const handleSaveConfig = useCallback(async (
+    credential?: string,
+    options?: {
+      baseUrl?: string
+      connectionDefaultModel?: string
+      models?: string[]
+      piAuthProvider?: string
+      modelSelectionMode?: 'automaticallySyncedFromProvider' | 'userDefined3Tier'
+    },
+    methodOverride?: ApiSetupMethod,
+    connectionSlugOverride?: string,
+    updateOnly?: boolean,
+  ): Promise<boolean> => {
     const method = methodOverride ?? state.apiSetupMethod
     if (!method) {
       return false
@@ -222,9 +242,12 @@ export function useOnboarding({
         connectionDefaultModel: options?.connectionDefaultModel,
         models: options?.models,
         piAuthProvider: options?.piAuthProvider,
-      }, editingSlug, existingSlugs)
+        modelSelectionMode: options?.modelSelectionMode,
+      }, connectionSlugOverride ?? editingSlug, existingSlugs)
       // Use new unified API
-      const result = await window.electronAPI.setupLlmConnection(setup)
+      const result = await window.electronAPI.setupLlmConnection(
+        updateOnly ? { ...setup, updateOnly: true } : setup
+      )
 
       if (result.success) {
         setState(s => ({ ...s, completionStatus: 'complete' }))
@@ -333,6 +356,7 @@ export function useOnboarding({
           connectionDefaultModel: data.connectionDefaultModel,
           models: data.models,
           piAuthProvider: data.piAuthProvider,
+          modelSelectionMode: data.modelSelectionMode,
         })
         if (saved) {
           setState(s => ({ ...s, credentialStatus: 'success', step: 'complete' }))
@@ -391,6 +415,7 @@ export function useOnboarding({
         connectionDefaultModel: data.connectionDefaultModel,
         models: data.models,
         piAuthProvider: data.piAuthProvider,
+        modelSelectionMode: data.modelSelectionMode,
       })
 
       if (saved) {
@@ -417,8 +442,8 @@ export function useOnboarding({
   // `method` is passed explicitly to break the stale-closure chain — the OAuth
   // await crosses renders, so handleSaveConfig's closure may have an outdated
   // state.apiSetupMethod.
-  const saveAndValidateConnection = useCallback(async (connectionSlug: string, method: ApiSetupMethod, credential?: string): Promise<boolean> => {
-    const saved = await handleSaveConfig(credential, undefined, method)
+  const saveAndValidateConnection = useCallback(async (connectionSlug: string, method: ApiSetupMethod, credential?: string, updateOnly?: boolean): Promise<boolean> => {
+    const saved = await handleSaveConfig(credential, undefined, method, connectionSlug, updateOnly)
     if (!saved) {
       setState(s => ({ ...s, credentialStatus: 'error' }))
       return false
@@ -440,7 +465,7 @@ export function useOnboarding({
   const [copilotDeviceCode, setCopilotDeviceCode] = useState<{ userCode: string; verificationUri: string } | undefined>()
 
   // Start OAuth flow (Claude or ChatGPT depending on selected method)
-  const handleStartOAuth = useCallback(async (methodOverride?: ApiSetupMethod) => {
+  const handleStartOAuth = useCallback(async (methodOverride?: ApiSetupMethod, connectionSlugOverride?: string) => {
     const effectiveMethod = methodOverride ?? state.apiSetupMethod
 
     if (methodOverride && methodOverride !== state.apiSetupMethod) {
@@ -467,11 +492,13 @@ export function useOnboarding({
     try {
       // ChatGPT OAuth (single-step flow - opens browser, captures tokens automatically)
       if (effectiveMethod === 'pi_chatgpt_oauth') {
-        const connectionSlug = apiSetupMethodToConnectionSetup(effectiveMethod, {}, editingSlug, existingSlugs).slug
+        const effectiveEditingSlug = connectionSlugOverride ?? editingSlug
+        const isReauth = !!effectiveEditingSlug
+        const connectionSlug = apiSetupMethodToConnectionSetup(effectiveMethod, {}, effectiveEditingSlug, existingSlugs).slug
         const result = await window.electronAPI.startChatGptOAuth(connectionSlug)
 
         if (result.success) {
-          await saveAndValidateConnection(connectionSlug, effectiveMethod)
+          await saveAndValidateConnection(connectionSlug, effectiveMethod, undefined, isReauth)
         } else {
           setState(s => ({
             ...s,
@@ -484,7 +511,9 @@ export function useOnboarding({
 
       // Copilot OAuth (device flow — polls for token after user enters code on GitHub)
       if (effectiveMethod === 'pi_copilot_oauth') {
-        const connectionSlug = apiSetupMethodToConnectionSetup(effectiveMethod, {}, editingSlug, existingSlugs).slug
+        const effectiveEditingSlug = connectionSlugOverride ?? editingSlug
+        const isReauth = !!effectiveEditingSlug
+        const connectionSlug = apiSetupMethodToConnectionSetup(effectiveMethod, {}, effectiveEditingSlug, existingSlugs).slug
 
         // Subscribe to device code event before starting the flow
         const cleanup = window.electronAPI.onCopilotDeviceCode((data) => {
@@ -495,7 +524,7 @@ export function useOnboarding({
           const result = await window.electronAPI.startCopilotOAuth(connectionSlug)
 
           if (result.success) {
-            await saveAndValidateConnection(connectionSlug, effectiveMethod)
+            await saveAndValidateConnection(connectionSlug, effectiveMethod, undefined, isReauth)
           } else {
             setState(s => ({
               ...s,
@@ -593,7 +622,7 @@ export function useOnboarding({
 
       if (result.success && result.token) {
         setIsWaitingForCode(false)
-        await saveAndValidateConnection(connectionSlug, 'claude_oauth', result.token)
+        await saveAndValidateConnection(connectionSlug, 'claude_oauth', result.token, !!editingSlug)
       } else {
         setState(s => ({
           ...s,

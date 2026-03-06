@@ -7,7 +7,6 @@
 
 import * as React from 'react'
 import type { RightSidebarPanel } from '../../../shared/types'
-import { SessionMetadataPanel } from '../right-sidebar/SessionMetadataPanel'
 import { WorkspaceFilesPanel } from '../right-sidebar/WorkspaceFilesPanel'
 
 export interface RightSidebarProps {
@@ -24,9 +23,6 @@ export interface RightSidebarProps {
  */
 export function RightSidebar({ panel, sessionId, closeButton }: RightSidebarProps) {
   switch (panel.type) {
-    case 'sessionMetadata':
-      return <SessionMetadataPanel sessionId={sessionId} closeButton={closeButton} />
-
     case 'files':
       return <WorkspaceFilesPanel sessionId={sessionId} closeButton={closeButton} />
 

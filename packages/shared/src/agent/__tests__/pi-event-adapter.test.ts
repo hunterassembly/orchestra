@@ -29,6 +29,7 @@ describe('PiEventAdapter', () => {
   });
 
   afterEach(() => {
+    toolMetadataStore._clearForTesting();
     rmSync(sessionDir, { recursive: true, force: true });
   });
 
@@ -444,21 +445,81 @@ describe('PiEventAdapter', () => {
   // ============================================================
 
   describe('error surfacing', () => {
-    it('should emit error event for stopReason error with errorMessage', () => {
+    it('should emit plain error for unclassified error messages', () => {
       const events = collect(adapter.adaptEvent({
         type: 'message_end',
         message: {
           role: 'assistant',
           stopReason: 'error',
-          errorMessage: 'API rate limit exceeded',
+          errorMessage: 'Something went wrong internally',
         },
       } as any));
 
       expect(events).toHaveLength(1);
       expect(events[0]).toMatchObject({
         type: 'error',
-        message: 'API rate limit exceeded',
+        message: 'Something went wrong internally',
       });
+    });
+
+    it('should emit typed_error for auth-expiry error messages', () => {
+      const events = collect(adapter.adaptEvent({
+        type: 'message_end',
+        message: {
+          role: 'assistant',
+          stopReason: 'error',
+          errorMessage: 'Provided authentication token is expired. Please try signing in again.',
+        },
+      } as any));
+
+      expect(events).toHaveLength(1);
+      expect(events[0].type).toBe('typed_error');
+      expect(events[0].error.code).toBe('expired_oauth_token');
+    });
+
+    it('should emit typed_error for 401 unauthorized errors', () => {
+      const events = collect(adapter.adaptEvent({
+        type: 'message_end',
+        message: {
+          role: 'assistant',
+          stopReason: 'error',
+          errorMessage: '401 Unauthorized',
+        },
+      } as any));
+
+      expect(events).toHaveLength(1);
+      expect(events[0].type).toBe('typed_error');
+      expect(events[0].error.code).toBe('invalid_api_key');
+    });
+
+    it('should emit typed_error for billing/402 errors', () => {
+      const events = collect(adapter.adaptEvent({
+        type: 'message_end',
+        message: {
+          role: 'assistant',
+          stopReason: 'error',
+          errorMessage: '402 Payment required',
+        },
+      } as any));
+
+      expect(events).toHaveLength(1);
+      expect(events[0].type).toBe('typed_error');
+      expect(events[0].error.code).toBe('billing_error');
+    });
+
+    it('should emit typed_error for rate limit errors', () => {
+      const events = collect(adapter.adaptEvent({
+        type: 'message_end',
+        message: {
+          role: 'assistant',
+          stopReason: 'error',
+          errorMessage: '429 Too many requests - rate limit exceeded',
+        },
+      } as any));
+
+      expect(events).toHaveLength(1);
+      expect(events[0].type).toBe('typed_error');
+      expect(events[0].error.code).toBe('rate_limited');
     });
 
     it('should not emit error without errorMessage even if stopReason is error', () => {
@@ -576,6 +637,31 @@ describe('PiEventAdapter', () => {
         toolUseId: 'call_canonical',
         intent: 'Canonical intent',
         displayName: 'Canonical name',
+      });
+    });
+
+    it('should fallback to base id metadata when toolCallId includes a pipe suffix', () => {
+      collect(adapter.adaptEvent({ type: 'turn_start' } as any));
+
+      toolMetadataStore.set('call_base_id', {
+        intent: 'Stored base intent',
+        displayName: 'Stored base name',
+        timestamp: Date.now(),
+      });
+
+      const events = collect(adapter.adaptEvent({
+        type: 'tool_execution_start',
+        toolCallId: 'call_base_id|fc_123',
+        toolName: 'bash',
+        args: { command: 'npm test' },
+      } as any));
+
+      expect(events).toHaveLength(1);
+      expect(events[0]).toMatchObject({
+        type: 'tool_start',
+        toolUseId: 'call_base_id|fc_123',
+        intent: 'Stored base intent',
+        displayName: 'Stored base name',
       });
     });
 

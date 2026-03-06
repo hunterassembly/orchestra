@@ -45,6 +45,7 @@ export function registerPiModelResolver(resolver: PiModelResolver): void {
  * - 'anthropic_compat': Anthropic-format compatible endpoints (OpenRouter, etc.)
  * - 'bedrock': AWS Bedrock (Claude models via AWS)
  * - 'vertex': Google Vertex AI (Claude models via GCP)
+ * - 'codex': Codex runtime backend using ChatGPT Plus OAuth
  * - 'pi': Pi unified LLM API (20+ providers via @mariozechner/pi-ai)
  * - 'pi_compat': Pi with custom endpoint (Ollama, self-hosted models)
  */
@@ -53,6 +54,7 @@ export type LlmProviderType =
   | 'anthropic_compat'
   | 'bedrock'
   | 'vertex'
+  | 'codex'
   | 'pi'
   | 'pi_compat';
 
@@ -92,6 +94,13 @@ export type LlmAuthType =
   | 'none';
 
 /**
+ * Ownership mode for a connection's model list.
+ * - automaticallySyncedFromProvider: provider defaults are synced automatically.
+ * - userDefined3Tier: user-picked Best/Balanced/Fast list is preserved.
+ */
+export type ModelSelectionMode = 'automaticallySyncedFromProvider' | 'userDefined3Tier';
+
+/**
  * LLM Connection configuration.
  * Stored in config.llmConnections array.
  */
@@ -122,6 +131,13 @@ export interface LlmConnection {
 
   /** Default model for this connection */
   defaultModel?: string;
+
+  /**
+   * Ownership mode for the model list.
+   * - automaticallySyncedFromProvider: provider defaults are kept in sync.
+   * - userDefined3Tier: preserve user-selected Best/Balanced/Fast list.
+   */
+  modelSelectionMode?: ModelSelectionMode;
 
   /**
    * Pi auth provider name (e.g., 'anthropic', 'openai', 'github-copilot').
@@ -215,6 +231,13 @@ function findSmallModel(connection: Pick<LlmConnection, 'models' | 'providerType
   const toSearchStr = (m: ModelDefinition | string) =>
     typeof m === 'string' ? m.toLowerCase() : `${m.id} ${m.name} ${m.shortName}`.toLowerCase();
 
+  const isDeniedSmallModel = (modelId: string): boolean => {
+    const bare = modelId.startsWith('pi/') ? modelId.slice(3) : modelId;
+    return bare === 'codex-mini-latest';
+  };
+
+  const isAllowedModel = (m: ModelDefinition | string): boolean => !isDeniedSmallModel(toId(m));
+
   // Provider-aware keyword search
   const keywords: string[] = [];
 
@@ -229,6 +252,7 @@ function findSmallModel(connection: Pick<LlmConnection, 'models' | 'providerType
 
   if (keywords.length > 0) {
     const match = connection.models.find(m => {
+      if (!isAllowedModel(m)) return false;
       const searchStr = toSearchStr(m);
       return keywords.some(k => searchStr.includes(k));
     });
@@ -237,8 +261,9 @@ function findSmallModel(connection: Pick<LlmConnection, 'models' | 'providerType
     }
   }
 
-  // Fallback: last model in the list
-  return toId(connection.models[connection.models.length - 1]!);
+  // Fallback: last allowed model in the list, otherwise final entry.
+  const fallback = [...connection.models].reverse().find(isAllowedModel);
+  return fallback ? toId(fallback) : toId(connection.models[connection.models.length - 1]!);
 }
 
 /**
@@ -379,6 +404,11 @@ export function getModelsForProviderType(providerType: LlmProviderType, piAuthPr
     return [];
   }
 
+  // Codex uses the same discovered model catalog as Pi's OpenAI Codex auth provider.
+  if (providerType === 'codex') {
+    return _piModelResolver('openai-codex');
+  }
+
   // Pi: fetch models via registered resolver (avoids Pi SDK import in renderer)
   if (providerType === 'pi') {
     return _piModelResolver(piAuthProvider);
@@ -416,6 +446,9 @@ export const PI_PREFERRED_DEFAULTS: Record<string, string[]> = {
 };
 
 export function getDefaultModelsForConnection(providerType: LlmProviderType, piAuthProvider?: string): Array<ModelDefinition | string> {
+  if (providerType === 'codex') {
+    return _piModelResolver('openai-codex');
+  }
   if (providerType === 'pi') {
     const models = _piModelResolver(piAuthProvider);
     // Sort preferred defaults first so getDefaultModelForConnection picks a modern model
@@ -521,6 +554,7 @@ export function isValidProviderAuthCombination(
     anthropic_compat: ['api_key_with_endpoint'],
     bedrock: ['bearer_token', 'iam_credentials', 'environment'],
     vertex: ['oauth', 'service_account_file', 'environment'],
+    codex: ['oauth'],
     pi: ['api_key', 'oauth', 'none'],
     pi_compat: ['api_key_with_endpoint', 'none'],
   };
