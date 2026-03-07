@@ -40,6 +40,8 @@ interface VaultNote {
   title: string
 }
 
+type VaultNotesLoadState = 'idle' | 'loading' | 'loaded' | 'error'
+
 // ============================================================
 // Animation variants (matches SessionFilesSection)
 // ============================================================
@@ -233,9 +235,10 @@ const FileTreeItem = memo(function FileTreeItem({
 export interface WorkspaceFilesPanelProps {
   sessionId?: string
   closeButton?: React.ReactNode
+  vaultRootPath?: string | null
 }
 
-export function WorkspaceFilesPanel({ sessionId, closeButton }: WorkspaceFilesPanelProps) {
+export function WorkspaceFilesPanel({ sessionId, closeButton, vaultRootPath = null }: WorkspaceFilesPanelProps) {
   const session = useSessionData(sessionId || '')
   const workspace = useActiveWorkspace()
   // Use the session's working directory (the repo it's operating in),
@@ -397,6 +400,8 @@ export function WorkspaceFilesPanel({ sessionId, closeButton }: WorkspaceFilesPa
   const [changedEntries, setChangedEntries] = useState<GitStatusEntry[]>([])
   const [gitRepoInfo, setGitRepoInfo] = useState<GitRepoInfo | null>(null)
   const lastReviewFingerprintRef = useRef<string | null>(null)
+  const [resolvedVaultRootPath, setResolvedVaultRootPath] = useState<string | null>(vaultRootPath)
+  const [vaultNotesLoadState, setVaultNotesLoadState] = useState<VaultNotesLoadState>('idle')
   const [vaultNotes, setVaultNotes] = useState<VaultNote[]>([])
   const [selectedNotePath, setSelectedNotePath] = useState<string | null>(null)
   const [selectedNoteContent, setSelectedNoteContent] = useState('')
@@ -404,26 +409,77 @@ export function WorkspaceFilesPanel({ sessionId, closeButton }: WorkspaceFilesPa
   const [incomingBacklinks, setIncomingBacklinks] = useState<VaultNote[]>([])
   const noteSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
+  useEffect(() => {
+    if (vaultRootPath?.trim()) {
+      setResolvedVaultRootPath(vaultRootPath.trim())
+      return
+    }
+
+    let cancelled = false
+    const loadVaultPath = async () => {
+      try {
+        const prefs = await window.electronAPI.readPreferences()
+        const parsed = JSON.parse(prefs.content || '{}') as { vault?: { path?: string } }
+        if (!cancelled) {
+          setResolvedVaultRootPath(parsed?.vault?.path?.trim() || null)
+        }
+      } catch (error) {
+        console.error('[notes-tray] Failed to load vault path from preferences:', error)
+        if (!cancelled) {
+          setResolvedVaultRootPath(null)
+        }
+      }
+    }
+
+    void loadVaultPath()
+    return () => {
+      cancelled = true
+    }
+  }, [vaultRootPath])
+
   const handleTabChange = useCallback((value: string) => {
     setActiveTab(value)
     storage.set(storage.KEYS.workspaceFilesActiveTab, value)
   }, [])
 
+  const effectiveRootPath = React.useMemo(
+    () => resolvedVaultRootPath || workspace?.rootPath || null,
+    [resolvedVaultRootPath, workspace?.rootPath],
+  )
+
   const notesRootPath = React.useMemo(() => {
-    if (!workspace?.rootPath) return null
-    const sep = workspace.rootPath.endsWith('/') ? '' : '/'
-    return `${workspace.rootPath}${sep}notes`
-  }, [workspace?.rootPath])
+    if (!effectiveRootPath) return null
+    return resolvedVaultRootPath
+      ? effectiveRootPath.replace(/\/$/, '')
+      : `${effectiveRootPath.replace(/\/$/, '')}/notes`
+  }, [effectiveRootPath, resolvedVaultRootPath])
+
+  const toRelativePath = useCallback((absolutePath: string): string => {
+    if (!effectiveRootPath) return absolutePath
+    const normalizedRoot = effectiveRootPath.replace(/\/+$/, '')
+    const normalizedPath = absolutePath.replace(/\\/g, '/')
+    const rootWithSlash = `${normalizedRoot}/`
+    if (normalizedPath.startsWith(rootWithSlash)) {
+      return normalizedPath.slice(rootWithSlash.length)
+    }
+    if (normalizedPath.startsWith(normalizedRoot)) {
+      return normalizedPath.slice(normalizedRoot.length).replace(/^\/+/, '')
+    }
+    return absolutePath
+  }, [effectiveRootPath])
+
+  const selectedAbsolutePath = React.useMemo(() => {
+    if (!effectiveRootPath || !selectedNotePath) return null
+    return `${effectiveRootPath.replace(/\/$/, '')}/${selectedNotePath}`
+  }, [effectiveRootPath, selectedNotePath])
 
   const listMarkdownNotes = useCallback(async (dirPath: string): Promise<VaultNote[]> => {
     const entries = await window.electronAPI.getWorkspaceFiles(dirPath)
     const nested = await Promise.all(entries.map(async (entry) => {
       if (entry.type === 'directory') return listMarkdownNotes(entry.path)
       const lower = entry.name.toLowerCase()
-      if (!lower.endsWith('.md') && !lower.endsWith('.markdown')) return []
-      const relativePath = workspace?.rootPath
-        ? entry.path.replace(`${workspace.rootPath}/`, '')
-        : entry.path
+      if (!lower.endsWith('.md') && !lower.endsWith('.markdown') && !lower.endsWith('.mdc')) return []
+      const relativePath = toRelativePath(entry.path)
       return [{
         id: entry.path,
         path: entry.path,
@@ -432,43 +488,53 @@ export function WorkspaceFilesPanel({ sessionId, closeButton }: WorkspaceFilesPa
       }]
     }))
     return nested.flat()
-  }, [workspace?.rootPath])
+  }, [toRelativePath])
 
   const loadVaultNotes = useCallback(async () => {
     if (!notesRootPath) {
       setVaultNotes([])
+      setVaultNotesLoadState('idle')
       return
     }
     try {
+      setVaultNotesLoadState('loading')
       const notes = await listMarkdownNotes(notesRootPath)
       notes.sort((a, b) => a.relativePath.localeCompare(b.relativePath))
       setVaultNotes(notes)
+      setVaultNotesLoadState('loaded')
       if (notes.length > 0 && !selectedNotePath) {
-        setSelectedNotePath(notes[0].path)
+        setSelectedNotePath(notes[0].relativePath)
       }
-    } catch {
+    } catch (error) {
+      console.error('[notes-tray] Failed to load notes:', { notesRootPath, error })
       setVaultNotes([])
+      setVaultNotesLoadState('error')
     }
   }, [notesRootPath, listMarkdownNotes, selectedNotePath])
 
   const createNewVaultNote = useCallback(async () => {
-    if (!workspace?.id || !workspace.rootPath || !notesRootPath) return
+    if (!effectiveRootPath || !notesRootPath) return
     const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-')
     const fileName = `note-${stamp}.md`
-    const relativePath = `notes/${fileName}`
+    const relativePath = resolvedVaultRootPath ? fileName : `notes/${fileName}`
     const initial = `# ${fileName.replace(/\.md$/i, '')}\n\n`
     try {
-      await window.electronAPI.writeWorkspaceText(workspace.id, relativePath, initial)
+      if (resolvedVaultRootPath) {
+        await window.electronAPI.writeVaultText(resolvedVaultRootPath, relativePath, initial)
+      } else if (workspace?.id) {
+        await window.electronAPI.writeWorkspaceText(workspace.id, relativePath, initial)
+      } else {
+        throw new Error('Workspace not available for note creation')
+      }
       await loadVaultNotes()
-      const absolute = `${workspace.rootPath}/notes/${fileName}`
-      setSelectedNotePath(absolute)
+      setSelectedNotePath(relativePath)
       setSelectedNoteContent(initial)
       toast.success('Created new note')
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unable to create note'
       toast.error(message)
     }
-  }, [workspace?.id, workspace?.rootPath, notesRootPath, loadVaultNotes])
+  }, [effectiveRootPath, notesRootPath, resolvedVaultRootPath, workspace?.id, loadVaultNotes])
 
   useEffect(() => {
     if (!rootPath) {
@@ -493,10 +559,13 @@ export function WorkspaceFilesPanel({ sessionId, closeButton }: WorkspaceFilesPa
       setIncomingBacklinks([])
       return
     }
-    window.electronAPI.readFile(selectedNotePath)
+    const readPromise = resolvedVaultRootPath
+      ? window.electronAPI.readVaultText(resolvedVaultRootPath, selectedNotePath)
+      : (selectedAbsolutePath ? window.electronAPI.readFile(selectedAbsolutePath) : Promise.resolve(''))
+    readPromise
       .then((content) => setSelectedNoteContent(content || ''))
       .catch(() => setSelectedNoteContent(''))
-  }, [selectedNotePath])
+  }, [resolvedVaultRootPath, selectedAbsolutePath, selectedNotePath])
 
   // Recompute backlinks (simple wikilink resolver by title)
   useEffect(() => {
@@ -504,7 +573,7 @@ export function WorkspaceFilesPanel({ sessionId, closeButton }: WorkspaceFilesPa
       setIncomingBacklinks([])
       return
     }
-    const selected = vaultNotes.find(n => n.path === selectedNotePath)
+    const selected = vaultNotes.find((note) => note.relativePath === selectedNotePath)
     if (!selected) {
       setIncomingBacklinks([])
       return
@@ -516,7 +585,9 @@ export function WorkspaceFilesPanel({ sessionId, closeButton }: WorkspaceFilesPa
       await Promise.all(vaultNotes.map(async (note) => {
         if (note.path === selected.path) return
         try {
-          const content = await window.electronAPI.readFile(note.path)
+          const content = resolvedVaultRootPath
+            ? await window.electronAPI.readVaultText(resolvedVaultRootPath, note.relativePath)
+            : await window.electronAPI.readFile(note.path)
           const matches = content.match(/\[\[([^\]]+)\]\]/g) || []
           const hasLink = matches.some((m) => m.replace(/^\[\[|\]\]$/g, '').trim().toLowerCase() === title)
           if (hasLink) linkedFrom.push(note)
@@ -530,7 +601,7 @@ export function WorkspaceFilesPanel({ sessionId, closeButton }: WorkspaceFilesPa
       }
     })()
     return () => { cancelled = true }
-  }, [selectedNotePath, vaultNotes])
+  }, [resolvedVaultRootPath, selectedNotePath, vaultNotes])
 
   const handlePrefillPrompt = useCallback((label: string, prompt: string) => {
     if (openWorkflowTabRef?.current) {
@@ -646,13 +717,17 @@ export function WorkspaceFilesPanel({ sessionId, closeButton }: WorkspaceFilesPa
   }, [activeTab, sessionId, changedEntries, onSendMessage, openWorkflowTabRef, reviewPrompt])
 
   const saveVaultNote = useCallback((markdown: string) => {
-    if (!workspace?.id || !workspace.rootPath || !selectedNotePath) return
-    const relativePath = selectedNotePath.replace(`${workspace.rootPath}/`, '')
+    if (!selectedNotePath) return
     if (noteSaveTimerRef.current) clearTimeout(noteSaveTimerRef.current)
     setSelectedNoteContent(markdown)
     setIsSavingNote(true)
     noteSaveTimerRef.current = setTimeout(() => {
-      window.electronAPI.writeWorkspaceText(workspace.id, relativePath, markdown)
+      const writePromise = resolvedVaultRootPath
+        ? window.electronAPI.writeVaultText(resolvedVaultRootPath, selectedNotePath, markdown)
+        : (workspace?.id
+          ? window.electronAPI.writeWorkspaceText(workspace.id, selectedNotePath, markdown)
+          : Promise.reject(new Error('Workspace not found for note write')))
+      writePromise
         .catch((error) => {
           const message = error instanceof Error ? error.message : 'Failed to save note'
           toast.error(message)
@@ -662,7 +737,7 @@ export function WorkspaceFilesPanel({ sessionId, closeButton }: WorkspaceFilesPa
           noteSaveTimerRef.current = null
         })
     }, 350)
-  }, [workspace?.id, workspace?.rootPath, selectedNotePath])
+  }, [resolvedVaultRootPath, selectedNotePath, workspace?.id])
 
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
@@ -881,16 +956,24 @@ export function WorkspaceFilesPanel({ sessionId, closeButton }: WorkspaceFilesPa
               </button>
             </div>
             <div className="flex-1 overflow-auto p-1.5 space-y-0.5">
-              {vaultNotes.length === 0 ? (
-                <div className="px-2 py-3 text-xs text-muted-foreground">No notes yet</div>
+              {vaultNotesLoadState === 'loading' ? (
+                <div className="px-2 py-3 text-xs text-muted-foreground">Loading notes…</div>
+              ) : vaultNotesLoadState === 'error' ? (
+                <div className="px-2 py-3 text-xs text-muted-foreground">
+                  Unable to load notes
+                </div>
+              ) : vaultNotes.length === 0 ? (
+                <div className="px-2 py-3 text-xs text-muted-foreground">
+                  {resolvedVaultRootPath ? 'No notes found in vault' : 'No notes yet'}
+                </div>
               ) : (
                 vaultNotes.map((note) => (
                   <button
                     key={note.path}
-                    onClick={() => setSelectedNotePath(note.path)}
+                    onClick={() => setSelectedNotePath(note.relativePath)}
                     className={cn(
                       'w-full text-left rounded-md px-2 py-1.5 text-xs cursor-pointer',
-                      selectedNotePath === note.path ? 'bg-muted text-foreground' : 'text-foreground/80 hover:bg-sidebar-hover',
+                      selectedNotePath === note.relativePath ? 'bg-muted text-foreground' : 'text-foreground/80 hover:bg-sidebar-hover',
                     )}
                     title={note.relativePath}
                   >
@@ -908,7 +991,7 @@ export function WorkspaceFilesPanel({ sessionId, closeButton }: WorkspaceFilesPa
             <div className="h-9 px-3 border-b border-border/40 flex items-center justify-between">
               <div className="min-w-0">
                 <div className="text-xs font-medium truncate">
-                  {selectedNotePath ? (vaultNotes.find(n => n.path === selectedNotePath)?.title || 'Note') : 'Select a note'}
+                  {selectedNotePath ? (vaultNotes.find((note) => note.relativePath === selectedNotePath)?.title || 'Note') : 'Select a note'}
                 </div>
               </div>
               <div className="text-[10px] text-muted-foreground">{isSavingNote ? 'Saving…' : ''}</div>

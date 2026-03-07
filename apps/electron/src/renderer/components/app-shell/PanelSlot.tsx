@@ -40,6 +40,10 @@ interface PanelSlotProps {
   sash?: React.ReactNode
   /** Optional global vault root path for notes/tasks storage */
   vaultRootPath?: string | null
+  /** Optional active workspace id for workspace-scoped project registry */
+  workspaceId?: string | null
+  /** Optional workspace root path for project/note derived surfaces */
+  workspaceRootPath?: string | null
 }
 
 export function PanelSlot({
@@ -52,6 +56,8 @@ export function PanelSlot({
   proportion,
   sash,
   vaultRootPath = null,
+  workspaceId = null,
+  workspaceRootPath = null,
 }: PanelSlotProps) {
   const closePanel = useSetAtom(closePanelAtom)
   const setFocusedPanel = useSetAtom(focusedPanelIdAtom)
@@ -135,6 +141,8 @@ export function PanelSlot({
             <MainContentPanel
               navStateOverride={navState}
               isSidebarAndNavigatorHidden={isSidebarAndNavigatorHidden}
+              workspaceId={workspaceId}
+              workspaceRootPath={workspaceRootPath}
               vaultRootPath={vaultRootPath}
             />
           </AppShellProvider>

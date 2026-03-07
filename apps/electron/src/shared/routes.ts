@@ -91,6 +91,35 @@ export const routes = {
   // View Routes - Compound sidebar/navigator/details routes
   // ============================================
   view: {
+    /** Agent home view */
+    agent: () => 'agent' as const,
+
+    /** Projects view or a specific project canvas */
+    projects: (projectId?: string) =>
+      projectId ? `projects/project/${encodeURIComponent(projectId)}` as const : 'projects' as const,
+
+    /** Tasks view, optionally scoped to a section or opened note */
+    tasks: (params?: { section?: 'today' | 'upcoming' | 'anytime'; notePath?: string }) => {
+      const { section, notePath } = params ?? {}
+      const taskSection = section ?? 'today'
+      if (notePath) {
+        return `tasks/${taskSection}/note/${encodeURIComponent(notePath)}` as const
+      }
+      return section ? `tasks/${taskSection}` as const : 'tasks' as const
+    },
+
+    /** Today tasks view */
+    tasksToday: (notePath?: string) =>
+      notePath ? `tasks/today/note/${encodeURIComponent(notePath)}` as const : 'tasks/today' as const,
+
+    /** Upcoming tasks view */
+    tasksUpcoming: (notePath?: string) =>
+      notePath ? `tasks/upcoming/note/${encodeURIComponent(notePath)}` as const : 'tasks/upcoming' as const,
+
+    /** Anytime tasks view */
+    tasksAnytime: (notePath?: string) =>
+      notePath ? `tasks/anytime/note/${encodeURIComponent(notePath)}` as const : 'tasks/anytime' as const,
+
     /** All sessions view (sessions navigator, allSessions filter) */
     allSessions: (sessionId?: string) =>
       sessionId ? `allSessions/session/${sessionId}` as const : 'allSessions' as const,
@@ -181,6 +210,13 @@ export const routes = {
       notePath
         ? `notes/note/${encodeURIComponent(notePath)}` as const
         : 'notes' as const,
+
+    /** Threads view (Benji label over session threads) */
+    threads: (sessionId?: string) =>
+      sessionId ? `threads/thread/${sessionId}` as const : 'threads' as const,
+
+    /** Queue view */
+    queue: () => 'queue' as const,
 
     /** Settings view (settings navigator) - uses SettingsSubpage from registry */
     settings: (subpage?: SettingsSubpage) =>

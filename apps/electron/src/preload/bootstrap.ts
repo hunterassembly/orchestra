@@ -105,6 +105,32 @@ client.connect()
 const api = buildClientApi(client, CHANNEL_MAP, (ch) => client.isChannelAvailable(ch))
 
 if (wsMode === 'local') {
+  ;(api as any).getWorkspaceFiles = (rootPath: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.GET_WORKSPACE_FILES, rootPath)
+  ;(api as any).watchWorkspaceFiles = (rootPath: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.WATCH_WORKSPACE_FILES, rootPath)
+  ;(api as any).unwatchWorkspaceFiles = () =>
+    ipcRenderer.invoke(IPC_CHANNELS.UNWATCH_WORKSPACE_FILES)
+  ;(api as any).onWorkspaceFilesChanged = (callback: (rootPath: string) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, rootPath: string) => callback(rootPath)
+    ipcRenderer.on(IPC_CHANNELS.WORKSPACE_FILES_CHANGED, handler)
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.WORKSPACE_FILES_CHANGED, handler)
+  }
+  ;(api as any).writeWorkspaceText = (workspaceId: string, relativePath: string, content: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.WORKSPACE_WRITE_TEXT, workspaceId, relativePath, content)
+  ;(api as any).renameWorkspaceText = (workspaceId: string, oldRelativePath: string, newRelativePath: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.WORKSPACE_RENAME_TEXT, workspaceId, oldRelativePath, newRelativePath)
+  ;(api as any).getGitRepoInfo = (dirPath: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.GET_GIT_REPO_INFO, dirPath)
+  ;(api as any).switchGitBranch = (dirPath: string, branch: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.GIT_SWITCH_BRANCH, dirPath, branch)
+  ;(api as any).getGitDiffStat = (dirPath: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.GET_GIT_DIFF_STAT, dirPath)
+  ;(api as any).getGitStatus = (dirPath: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.GET_GIT_STATUS, dirPath)
+  ;(api as any).getGitDiff = (dirPath: string, filePath: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.GET_GIT_DIFF, dirPath, filePath)
+
   ;(api as any).readVaultText = (vaultRootPath: string, relativePath: string) =>
     ipcRenderer.invoke(IPC_CHANNELS.VAULT_READ_TEXT, vaultRootPath, relativePath)
   ;(api as any).writeVaultText = (vaultRootPath: string, relativePath: string, content: string) =>

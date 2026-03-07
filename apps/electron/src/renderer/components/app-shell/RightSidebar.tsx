@@ -16,15 +16,17 @@ export interface RightSidebarProps {
   sessionId?: string
   /** Close button to display in panel header */
   closeButton?: React.ReactNode
+  /** Global vault root path for notes tray */
+  vaultRootPath?: string | null
 }
 
 /**
  * Routes right sidebar content based on panel type
  */
-export function RightSidebar({ panel, sessionId, closeButton }: RightSidebarProps) {
+export function RightSidebar({ panel, sessionId, closeButton, vaultRootPath = null }: RightSidebarProps) {
   switch (panel.type) {
     case 'files':
-      return <WorkspaceFilesPanel sessionId={sessionId} closeButton={closeButton} />
+      return <WorkspaceFilesPanel sessionId={sessionId} closeButton={closeButton} vaultRootPath={vaultRootPath} />
 
     case 'history':
       // TODO: Implement SessionHistoryPanel

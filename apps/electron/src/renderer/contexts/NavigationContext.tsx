@@ -54,6 +54,11 @@ import type {
   ContentBadge,
 } from '../../shared/types'
 import {
+  isAgentNavigation,
+  isProjectsNavigation,
+  isTasksNavigation,
+  isThreadsNavigation,
+  isQueueNavigation,
   isSessionsNavigation,
   isSourcesNavigation,
   isSettingsNavigation,
@@ -74,7 +79,19 @@ export type { Route }
 
 // Re-export navigation state types for consumers
 export type { NavigationState, SessionFilter }
-export { isSessionsNavigation, isSourcesNavigation, isSettingsNavigation, isSkillsNavigation, isAutomationsNavigation, isNotesNavigation }
+export {
+  isAgentNavigation,
+  isProjectsNavigation,
+  isTasksNavigation,
+  isThreadsNavigation,
+  isQueueNavigation,
+  isSessionsNavigation,
+  isSourcesNavigation,
+  isSettingsNavigation,
+  isSkillsNavigation,
+  isAutomationsNavigation,
+  isNotesNavigation,
+}
 
 interface NavigationContextValue {
   /** Navigate to a route */
@@ -441,7 +458,7 @@ export function NavigationProvider({
       // If an explicit session is provided but doesn't exist in the current workspace,
       // treat it as no selection so we can auto-select a valid session (if any).
       // Use store.get() for fresh atom value to avoid stale closure after session creation.
-      if (isSessionsNavigation(nextState) && nextState.details) {
+      if ((isSessionsNavigation(nextState) || isThreadsNavigation(nextState)) && nextState.details) {
         const freshMetaMap = store.get(sessionMetaMapAtom)
         const meta = freshMetaMap.get(nextState.details.sessionId)
         if (!meta || (workspaceId && meta.workspaceId !== workspaceId)) {
@@ -449,15 +466,20 @@ export function NavigationProvider({
         }
       }
 
-      // For chats: auto-select last session in workspace (if valid), otherwise first
-      if (isSessionsNavigation(nextState) && !nextState.details) {
+      // For session-backed surfaces: auto-select last session in workspace (if valid), otherwise first
+      if ((isSessionsNavigation(nextState) || isThreadsNavigation(nextState)) && !nextState.details) {
         const lastSelectedSessionId = getLastSelectedSessionId(nextState.filter)
         const fallbackSessionId = lastSelectedSessionId ?? getFirstSessionId(nextState.filter)
         if (fallbackSessionId) {
-          const stateWithSelection: NavigationState = {
-            ...nextState,
-            details: { type: 'session', sessionId: fallbackSessionId },
-          }
+          const stateWithSelection: NavigationState = isThreadsNavigation(nextState)
+            ? {
+                ...nextState,
+                details: { type: 'thread', sessionId: fallbackSessionId },
+              }
+            : {
+                ...nextState,
+                details: { type: 'session', sessionId: fallbackSessionId },
+              }
           if (workspaceId) {
             storage.set(storage.KEYS.lastSelectedSessionId, fallbackSessionId, workspaceId)
           }
@@ -509,8 +531,8 @@ export function NavigationProvider({
         return nextState
       }
 
-      // For chats with explicit session: update session selection
-      if (isSessionsNavigation(nextState) && nextState.details) {
+      // For session-backed surfaces with explicit selection: update session selection
+      if ((isSessionsNavigation(nextState) || isThreadsNavigation(nextState)) && nextState.details) {
         if (workspaceId) {
           storage.set(storage.KEYS.lastSelectedSessionId, nextState.details.sessionId, workspaceId)
         }
@@ -639,7 +661,7 @@ export function NavigationProvider({
     const navState = parseRouteToNavigationState(route)
     if (!navState) return true // Non-navigation routes are always valid
 
-    if (isSessionsNavigation(navState) && navState.details) {
+    if ((isSessionsNavigation(navState) || isThreadsNavigation(navState)) && navState.details) {
       const meta = sessionMetaMap.get(navState.details.sessionId)
       // Session must exist and not be hidden
       return meta != null && !meta.hidden
@@ -804,7 +826,7 @@ export function NavigationProvider({
     // Only initialize once
     if (historyStackRef.current.length === 0) {
       const params = new URLSearchParams(window.location.search)
-      const initialRoute = (params.get('route') || 'allSessions') as Route
+      const initialRoute = (params.get('route') || 'agent') as Route
       historyStackRef.current = [initialRoute]
       historyIndexRef.current = 0
 
@@ -965,8 +987,13 @@ export function NavigationProvider({
 
   // Navigate to a session while preserving the current filter type
   const navigateToSession = useCallback((sessionId: string) => {
+    if (isThreadsNavigation(navigationState)) {
+      navigate(routes.view.threads(sessionId))
+      return
+    }
+
     if (!isSessionsNavigation(navigationState)) {
-      navigate(routes.view.allSessions(sessionId))
+      navigate(routes.view.threads(sessionId))
       return
     }
 
@@ -999,7 +1026,12 @@ export function NavigationProvider({
   // auto-select last-used session for this workspace (or fallback to first).
   useEffect(() => {
     if (!isReady || !workspaceId) return
-    if (!isSessionsNavigation(navigationState) || navigationState.details) return
+    if (
+      (!isSessionsNavigation(navigationState) && !isThreadsNavigation(navigationState))
+      || navigationState.details
+    ) {
+      return
+    }
 
     const lastSelectedSessionId = getLastSelectedSessionId(navigationState.filter)
     const fallbackSessionId = lastSelectedSessionId ?? getFirstSessionId(navigationState.filter)

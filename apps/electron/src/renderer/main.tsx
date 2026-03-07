@@ -70,7 +70,7 @@ sentryInit(
  * Minimal fallback UI shown when the entire React tree crashes.
  * Sentry.ErrorBoundary captures the error and sends it to Sentry automatically.
  */
-function CrashFallback() {
+function CrashFallback({ error }: { error?: unknown }) {
   const lastError = (() => {
     try {
       return localStorage.getItem(LAST_RENDERER_ERROR_KEY)
@@ -78,14 +78,19 @@ function CrashFallback() {
       return null
     }
   })()
+  const errorMessage = error instanceof Error
+    ? `${error.name}: ${error.message}`
+    : error != null
+      ? String(error)
+      : lastError
 
   return (
     <div className="flex flex-col items-center justify-center h-screen font-sans text-foreground/50 gap-3">
       <p className="text-base font-medium">Something went wrong</p>
       <p className="text-[13px]">Please restart the app. The error has been reported.</p>
-      {lastError && (
+      {errorMessage && (
         <p className="text-[11px] max-w-[92vw] text-center text-foreground/40 break-all px-4">
-          {lastError}
+          {errorMessage}
         </p>
       )}
       <button
@@ -139,7 +144,20 @@ function Root() {
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
-    <Sentry.ErrorBoundary fallback={<CrashFallback />}>
+    <Sentry.ErrorBoundary
+      fallback={({ error }) => <CrashFallback error={error} />}
+      onError={(error, componentStack) => {
+        const summary = error instanceof Error
+          ? `${error.name}: ${error.message}`
+          : String(error)
+        console.error('[renderer-error-boundary]', summary, componentStack)
+        try {
+          localStorage.setItem(LAST_RENDERER_ERROR_KEY, summary)
+        } catch {
+          // ignore
+        }
+      }}
+    >
       <JotaiProvider>
         <Root />
       </JotaiProvider>

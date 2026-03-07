@@ -4,6 +4,7 @@ import { useAtomValue, useStore } from "jotai"
 import { motion, AnimatePresence } from "motion/react"
 import {
   Archive,
+  BriefcaseBusiness,
   CheckCircle2,
   Settings,
   ChevronRight,
@@ -33,6 +34,8 @@ import {
   Info,
   Webhook,
   FileText,
+  FolderKanban,
+  MessagesSquare,
 } from "lucide-react"
 import { PanelRightRounded } from "../icons/PanelRightRounded"
 import { PanelLeftRounded } from "../icons/PanelLeftRounded"
@@ -110,6 +113,11 @@ import { navigate, routes } from "@/lib/navigate"
 import {
   useNavigation,
   useNavigationState,
+  isAgentNavigation,
+  isProjectsNavigation,
+  isTasksNavigation,
+  isThreadsNavigation,
+  isQueueNavigation,
   isSessionsNavigation,
   isSourcesNavigation,
   isSettingsNavigation,
@@ -137,6 +145,7 @@ import { hasOpenOverlay } from "@/lib/overlay-detection"
 import { clearSourceIconCaches } from "@/lib/icon-cache"
 import { VaultNotesListPanel } from "./VaultNotesListPanel"
 import { VaultTasksListPanel } from "./VaultTasksListPanel"
+import { BenjiNavigatorPanel, BenjiProjectsNavigatorPanel } from "./BenjiWaveOnePanels"
 
 /**
  * AppShellProps - Minimal props interface for AppShell component
@@ -607,14 +616,19 @@ function AppShellContent({
     navigateToSession(sessionId)
   }, [store, setFocusedPanel, navigateToSession])
 
-  // Derive chat filter from navigation state (only when in chats navigator)
-  const sessionFilter = isSessionsNavigation(navState) ? navState.filter : null
+  // Derive thread/session filter from navigation state for list rendering
+  const sessionFilter =
+    isSessionsNavigation(navState) || isThreadsNavigation(navState)
+      ? navState.filter
+      : null
 
   // Derive source filter from navigation state (only when in sources navigator)
   const sourceFilter: SourceFilter | null = isSourcesNavigation(navState) ? navState.filter ?? null : null
 
   // Derive automation filter from navigation state (only when in automations navigator)
   const automationFilter: AutomationFilter | null = isAutomationsNavigation(navState) ? navState.filter ?? null : null
+
+  const currentTaskSection = isTasksNavigation(navState) ? navState.section : 'today'
 
   // Per-view filter storage: each session list view (allSessions, flagged, state:X, label:X, view:X)
   // has its own independent set of status and label filters.
@@ -1621,6 +1635,14 @@ function AppShellContent({
     navigate(routes.view.allSessions())
   }, [])
 
+  const handleAgentClick = useCallback(() => {
+    navigate(routes.view.agent())
+  }, [])
+
+  const handleProjectsClick = useCallback(() => {
+    navigate(routes.view.projects())
+  }, [])
+
   const handleFlaggedClick = useCallback(() => {
     navigate(routes.view.flagged())
   }, [])
@@ -1731,9 +1753,15 @@ function AppShellContent({
   const handleTasksSectionClick = useCallback((section: TasksSectionId) => {
     setActiveKnowledgePanel('tasks')
     setActiveTasksSection(section)
-    // Temporary routing: task sections reuse the Notes workspace surface until
-    // dedicated task navigation state/routes are introduced.
-    navigate(routes.view.notes())
+    navigate(routes.view.tasks({ section }))
+  }, [])
+
+  const handleThreadsClick = useCallback(() => {
+    navigate(routes.view.threads())
+  }, [])
+
+  const handleQueueClick = useCallback(() => {
+    navigate(routes.view.queue())
   }, [])
 
   const handleNoteSelect = useCallback((notePath: string) => {
@@ -1741,6 +1769,10 @@ function AppShellContent({
     setActiveNotesSection('all')
     navigate(routes.view.notes(notePath))
   }, [])
+
+  const handleTaskNoteSelect = useCallback((notePath: string) => {
+    navigate(routes.view.tasks({ section: currentTaskSection, notePath }))
+  }, [currentTaskSection])
 
   const handleNoteSaved = useCallback(() => {
     setTaskIndexRefreshToken(prev => prev + 1)
@@ -1949,47 +1981,22 @@ function AppShellContent({
   const unifiedSidebarItems = React.useMemo((): SidebarItem[] => {
     const result: SidebarItem[] = []
 
-    // 1. Sessions section: All Sessions, Flagged, States header, States items
+    result.push({ id: 'nav:agent', type: 'nav', action: handleAgentClick })
+    result.push({ id: 'nav:projects', type: 'nav', action: handleProjectsClick })
+    result.push({ id: 'nav:tasks', type: 'nav', action: () => handleTasksSectionClick('today') })
+    result.push({ id: 'nav:notes', type: 'nav', action: handleNotesClick })
+    result.push({ id: 'nav:threads', type: 'nav', action: handleThreadsClick })
+    result.push({ id: 'nav:queue', type: 'nav', action: handleQueueClick })
+    result.push({ id: 'nav:settings', type: 'nav', action: () => handleSettingsClick('app') })
+    result.push({ id: 'nav:legacy', type: 'nav', action: handleAllSessionsClick })
     result.push({ id: 'nav:allSessions', type: 'nav', action: handleAllSessionsClick })
-    result.push({ id: 'nav:flagged', type: 'nav', action: handleFlaggedClick })
-    result.push({ id: 'nav:states', type: 'nav', action: handleAllSessionsClick })
-    for (const state of effectiveSessionStatuses) {
-      result.push({ id: `nav:state:${state.id}`, type: 'nav', action: () => handleSessionStatusClick(state.id) })
-    }
-
-    // 2. Labels section header + regular label tree for keyboard nav
-    result.push({ id: 'nav:labels', type: 'nav', action: handleAllSessionsClick })
-    // Flatten regular label tree for keyboard navigation (depth-first)
-    const flattenTree = (nodes: LabelTreeNode[]) => {
-      for (const node of nodes) {
-        if (node.label) {
-          result.push({ id: `nav:label:${node.fullId}`, type: 'nav', action: () => handleLabelClick(node.fullId) })
-        }
-        if (node.children.length > 0) flattenTree(node.children)
-      }
-    }
-    flattenTree(labelTree)
-
-    // 2b. Archived section
-    result.push({ id: 'nav:archived', type: 'nav', action: handleArchivedClick })
-
-    // 3. Sources, Skills, Settings
     result.push({ id: 'nav:sources', type: 'nav', action: handleSourcesClick })
     result.push({ id: 'nav:skills', type: 'nav', action: handleSkillsClick })
     result.push({ id: 'nav:automations', type: 'nav', action: handleAutomationsClick })
-    result.push({ id: 'nav:notes', type: 'nav', action: handleNotesClick })
-    result.push({ id: 'nav:notes:all', type: 'nav', action: () => handleNotesSectionClick('all') })
-    result.push({ id: 'nav:notes:daily', type: 'nav', action: () => handleNotesSectionClick('daily') })
-    result.push({ id: 'nav:notes:ideas', type: 'nav', action: () => handleNotesSectionClick('ideas') })
-    result.push({ id: 'nav:tasks', type: 'nav', action: () => handleTasksSectionClick('today') })
-    result.push({ id: 'nav:tasks:today', type: 'nav', action: () => handleTasksSectionClick('today') })
-    result.push({ id: 'nav:tasks:upcoming', type: 'nav', action: () => handleTasksSectionClick('upcoming') })
-    result.push({ id: 'nav:tasks:anytime', type: 'nav', action: () => handleTasksSectionClick('anytime') })
-    result.push({ id: 'nav:settings', type: 'nav', action: () => handleSettingsClick('app') })
     result.push({ id: 'nav:whats-new', type: 'nav', action: handleWhatsNewClick })
 
     return result
-  }, [handleAllSessionsClick, handleFlaggedClick, handleArchivedClick, handleSessionStatusClick, effectiveSessionStatuses, handleLabelClick, labelConfigs, labelTree, viewConfigs, handleViewClick, handleSourcesClick, handleSkillsClick, handleAutomationsClick, handleNotesClick, handleNotesSectionClick, handleTasksSectionClick, handleSettingsClick, handleWhatsNewClick])
+  }, [handleAgentClick, handleProjectsClick, handleTasksSectionClick, handleNotesClick, handleThreadsClick, handleQueueClick, handleSettingsClick, handleWhatsNewClick])
 
   // Toggle folder expanded state
   const handleToggleFolder = React.useCallback((path: string) => {
@@ -2098,6 +2105,33 @@ function AppShellContent({
 
   // Get title based on navigation state
   const listTitle = React.useMemo(() => {
+    if (isAgentNavigation(navState)) {
+      return 'Agent'
+    }
+
+    if (isProjectsNavigation(navState)) {
+      return 'Projects'
+    }
+
+    if (isTasksNavigation(navState)) {
+      switch (navState.section) {
+        case 'upcoming':
+          return 'Upcoming Tasks'
+        case 'anytime':
+          return 'Anytime Tasks'
+        default:
+          return 'Today Tasks'
+      }
+    }
+
+    if (isThreadsNavigation(navState)) {
+      return 'Threads'
+    }
+
+    if (isQueueNavigation(navState)) {
+      return 'Queue'
+    }
+
     // Sources navigator
     if (isSourcesNavigation(navState)) {
       return 'Sources'
@@ -2314,242 +2348,49 @@ function AppShellContent({
                   getItemProps={getSidebarItemProps}
                   focusedItemId={focusedSidebarItemId}
                   links={[
-                    // --- Sessions Section ---
                     {
-                      id: "nav:allSessions",
-                      title: "All Sessions",
-                      label: String(workspaceSessionMetas.length),
-                      icon: Inbox,
-                      variant: sessionFilter?.kind === 'allSessions' ? "default" : "ghost",
-                      onClick: handleAllSessionsClick,
+                      id: "nav:agent",
+                      title: "Agent",
+                      icon: Bot,
+                      variant: isAgentNavigation(navState) ? "default" : "ghost",
+                      onClick: handleAgentClick,
                     },
                     {
-                      id: "nav:notes",
-                      title: "Notes",
-                      icon: FileText,
-                      variant: (isNotesNavigation(navState) && activeKnowledgePanel === 'notes') ? "default" : "ghost",
-                      onClick: handleNotesClick,
-                    },
-                    {
-                      id: "nav:flagged",
-                      title: "Flagged",
-                      label: String(flaggedCount),
-                      icon: <Flag className="h-3.5 w-3.5" />,
-                      variant: sessionFilter?.kind === 'flagged' ? "default" : "ghost",
-                      onClick: handleFlaggedClick,
-                    },
-                    // States: expandable section with status sub-items (drag-and-drop reorder)
-                    {
-                      id: "nav:states",
-                      title: "Status",
-                      icon: CheckCircle2,
-                      variant: "ghost",
-                      onClick: () => toggleExpanded('nav:states'),
-                      expandable: true,
-                      expanded: isExpanded('nav:states'),
-                      onToggle: () => toggleExpanded('nav:states'),
-                      contextMenu: {
-                        type: 'allSessions',
-                        onConfigureStatuses: openConfigureStatuses,
-                      },
-                      // Enable flat DnD reorder for status items
-                      sortable: { onReorder: handleStatusReorder },
-                      items: effectiveSessionStatuses.map(state => ({
-                        id: `nav:state:${state.id}`,
-                        title: state.label,
-                        label: String(sessionStatusCounts[state.id] || 0),
-                        icon: state.icon,
-                        iconColor: state.resolvedColor,
-                        iconColorable: state.iconColorable,
-                        variant: (sessionFilter?.kind === 'state' && sessionFilter.stateId === state.id ? "default" : "ghost") as "default" | "ghost",
-                        onClick: () => handleSessionStatusClick(state.id),
-                        contextMenu: {
-                          type: 'status' as const,
-                          statusId: state.id,
-                          onConfigureStatuses: openConfigureStatuses,
-                        },
-                      })),
-                    },
-                    // Labels: navigable header (shows all labeled sessions) + hierarchical tree (drag-and-drop reorder + re-parent)
-                    {
-                      id: "nav:labels",
-                      title: "Labels",
-                      icon: Tag,
-                      // Only highlighted when "Labels" itself is selected (not sub-labels)
-                      variant: (sessionFilter?.kind === 'label' && sessionFilter.labelId === '__all__') ? "default" as const : "ghost" as const,
-                      // Clicking navigates to "all labeled sessions" view
-                      onClick: () => handleLabelClick('__all__'),
-                      expandable: true,
-                      expanded: isExpanded('nav:labels'),
-                      onToggle: () => toggleExpanded('nav:labels'),
-                      contextMenu: {
-                        type: 'labels' as const,
-                        onConfigureLabels: openConfigureLabels,
-                        onAddLabel: handleAddLabel,
-                      },
-                      items: buildLabelSidebarItems(labelTree),
-                    },
-                    // --- Archived Section ---
-                    {
-                      id: "nav:archived",
-                      title: "Archived",
-                      label: archivedCount > 0 ? String(archivedCount) : undefined,
-                      icon: Archive,
-                      variant: sessionFilter?.kind === 'archived' ? "default" : "ghost",
-                      onClick: handleArchivedClick,
-                    },
-                    // --- Separator ---
-                    { id: "separator:chats-sources", type: "separator" },
-                    // --- Sources & Skills Section ---
-                    {
-                      id: "nav:sources",
-                      title: "Sources",
-                      label: String(sources.length),
-                      icon: DatabaseZap,
-                      variant: (isSourcesNavigation(navState) && !sourceFilter) ? "default" : "ghost",
-                      onClick: handleSourcesClick,
-                      dataTutorial: "sources-nav",
-                      expandable: true,
-                      expanded: isExpanded('nav:sources'),
-                      onToggle: () => toggleExpanded('nav:sources'),
-                      contextMenu: {
-                        type: 'sources',
-                        onAddSource: () => openAddSource(),
-                      },
-                      items: [
-                        {
-                          id: "nav:sources:api",
-                          title: "APIs",
-                          label: String(sourceTypeCounts.api),
-                          icon: Globe,
-                          variant: (sourceFilter?.kind === 'type' && sourceFilter.sourceType === 'api') ? "default" : "ghost",
-                          onClick: handleSourcesApiClick,
-                          contextMenu: {
-                            type: 'sources' as const,
-                            onAddSource: () => openAddSource('api'),
-                            sourceType: 'api',
-                          },
-                        },
-                        {
-                          id: "nav:sources:mcp",
-                          title: "MCPs",
-                          label: String(sourceTypeCounts.mcp),
-                          icon: <McpIcon className="h-3.5 w-3.5" />,
-                          variant: (sourceFilter?.kind === 'type' && sourceFilter.sourceType === 'mcp') ? "default" : "ghost",
-                          onClick: handleSourcesMcpClick,
-                          contextMenu: {
-                            type: 'sources' as const,
-                            onAddSource: () => openAddSource('mcp'),
-                            sourceType: 'mcp',
-                          },
-                        },
-                        {
-                          id: "nav:sources:local",
-                          title: "Local Folders",
-                          label: String(sourceTypeCounts.local),
-                          icon: FolderOpen,
-                          variant: (sourceFilter?.kind === 'type' && sourceFilter.sourceType === 'local') ? "default" : "ghost",
-                          onClick: handleSourcesLocalClick,
-                          contextMenu: {
-                            type: 'sources' as const,
-                            onAddSource: () => openAddSource('local'),
-                            sourceType: 'local',
-                          },
-                        },
-                      ],
-                    },
-                    {
-                      id: "nav:skills",
-                      title: "Skills",
-                      label: String(skills.length),
-                      icon: Zap,
-                      variant: isSkillsNavigation(navState) ? "default" : "ghost",
-                      onClick: handleSkillsClick,
-                      contextMenu: {
-                        type: 'skills',
-                        onAddSkill: openAddSkill,
-                      },
-                    },
-                    {
-                      id: "nav:automations",
-                      title: "Automations",
-                      label: String(automations.length),
-                      icon: ListTodo,
-                      variant: (isAutomationsNavigation(navState) && !automationFilter) ? "default" : "ghost",
-                      onClick: handleAutomationsClick,
-                      expandable: true,
-                      expanded: isExpanded('nav:automations'),
-                      onToggle: () => toggleExpanded('nav:automations'),
-                      contextMenu: {
-                        type: 'automations' as const,
-                        onAddAutomation: openAddAutomation,
-                      },
-                      items: [
-                        {
-                          id: "nav:automations:scheduled",
-                          title: "Scheduled",
-                          label: String(automationTypeCounts.scheduled),
-                          icon: Clock,
-                          variant: (automationFilter?.kind === 'type' && automationFilter.automationType === 'scheduled') ? "default" : "ghost",
-                          onClick: handleAutomationsScheduledClick,
-                          contextMenu: { type: 'automations' as const, onAddAutomation: openAddAutomation },
-                        },
-                        {
-                          id: "nav:automations:event",
-                          title: "Event-based",
-                          label: String(automationTypeCounts.event),
-                          icon: Radio,
-                          variant: (automationFilter?.kind === 'type' && automationFilter.automationType === 'event') ? "default" : "ghost",
-                          onClick: handleAutomationsEventClick,
-                          contextMenu: { type: 'automations' as const, onAddAutomation: openAddAutomation },
-                        },
-                        {
-                          id: "nav:automations:agentic",
-                          title: "Agentic",
-                          label: String(automationTypeCounts.agentic),
-                          icon: Bot,
-                          variant: (automationFilter?.kind === 'type' && automationFilter.automationType === 'agentic') ? "default" : "ghost",
-                          onClick: handleAutomationsAgenticClick,
-                          contextMenu: { type: 'automations' as const, onAddAutomation: openAddAutomation },
-                        },
-                      ],
+                      id: "nav:projects",
+                      title: "Projects",
+                      icon: FolderKanban,
+                      variant: isProjectsNavigation(navState) ? "default" : "ghost",
+                      onClick: handleProjectsClick,
                     },
                     {
                       id: "nav:tasks",
                       title: "Tasks",
                       icon: ListTodo,
-                      variant: (isNotesNavigation(navState) && activeKnowledgePanel === 'tasks') ? "default" : "ghost",
-                      onClick: () => toggleExpanded('nav:tasks'),
-                      expandable: true,
-                      expanded: isExpanded('nav:tasks'),
-                      onToggle: () => toggleExpanded('nav:tasks'),
-                      items: [
-                        {
-                          id: "nav:tasks:today",
-                          title: "Today",
-                          icon: ListTodo,
-                          variant: (isNotesNavigation(navState) && activeKnowledgePanel === 'tasks' && activeTasksSection === 'today') ? "default" : "ghost",
-                          onClick: () => handleTasksSectionClick('today'),
-                        },
-                        {
-                          id: "nav:tasks:upcoming",
-                          title: "Upcoming",
-                          icon: ListTodo,
-                          variant: (isNotesNavigation(navState) && activeKnowledgePanel === 'tasks' && activeTasksSection === 'upcoming') ? "default" : "ghost",
-                          onClick: () => handleTasksSectionClick('upcoming'),
-                        },
-                        {
-                          id: "nav:tasks:anytime",
-                          title: "Anytime",
-                          icon: ListTodo,
-                          variant: (isNotesNavigation(navState) && activeKnowledgePanel === 'tasks' && activeTasksSection === 'anytime') ? "default" : "ghost",
-                          onClick: () => handleTasksSectionClick('anytime'),
-                        },
-                      ],
+                      variant: isTasksNavigation(navState) ? "default" : "ghost",
+                      onClick: () => handleTasksSectionClick('today'),
                     },
-                    // --- Separator ---
-                    { id: "separator:skills-settings", type: "separator" },
-                    // --- Settings ---
+                    {
+                      id: "nav:notes",
+                      title: "Notes",
+                      icon: FileText,
+                      variant: isNotesNavigation(navState) ? "default" : "ghost",
+                      onClick: handleNotesClick,
+                    },
+                    {
+                      id: "nav:threads",
+                      title: "Threads",
+                      label: String(workspaceSessionMetas.length),
+                      icon: MessagesSquare,
+                      variant: isThreadsNavigation(navState) ? "default" : "ghost",
+                      onClick: handleThreadsClick,
+                    },
+                    {
+                      id: "nav:queue",
+                      title: "Queue",
+                      icon: BriefcaseBusiness,
+                      variant: isQueueNavigation(navState) ? "default" : "ghost",
+                      onClick: handleQueueClick,
+                    },
                     {
                       id: "nav:settings",
                       title: "Settings",
@@ -2557,7 +2398,51 @@ function AppShellContent({
                       variant: isSettingsNavigation(navState) ? "default" : "ghost",
                       onClick: () => handleSettingsClick('app'),
                     },
-                    // --- What's New ---
+                    {
+                      id: "nav:legacy",
+                      title: "Compatibility",
+                      icon: Inbox,
+                      variant: "ghost",
+                      onClick: () => toggleExpanded('nav:legacy'),
+                      expandable: true,
+                      expanded: isExpanded('nav:legacy'),
+                      onToggle: () => toggleExpanded('nav:legacy'),
+                      items: [
+                        {
+                          id: "nav:allSessions",
+                          title: "Sessions",
+                          label: String(workspaceSessionMetas.length),
+                          icon: Inbox,
+                          variant: isSessionsNavigation(navState) ? "default" : "ghost",
+                          onClick: handleAllSessionsClick,
+                        },
+                        {
+                          id: "nav:sources",
+                          title: "Sources",
+                          label: String(sources.length),
+                          icon: DatabaseZap,
+                          variant: isSourcesNavigation(navState) ? "default" : "ghost",
+                          onClick: handleSourcesClick,
+                        },
+                        {
+                          id: "nav:skills",
+                          title: "Skills",
+                          label: String(skills.length),
+                          icon: Zap,
+                          variant: isSkillsNavigation(navState) ? "default" : "ghost",
+                          onClick: handleSkillsClick,
+                        },
+                        {
+                          id: "nav:automations",
+                          title: "Automations",
+                          label: String(automations.length),
+                          icon: Bot,
+                          variant: isAutomationsNavigation(navState) ? "default" : "ghost",
+                          onClick: handleAutomationsClick,
+                        },
+                      ],
+                    },
+                    { id: "separator:benji-secondary", type: "separator" },
                     {
                       id: "nav:whats-new",
                       title: "What's New",
@@ -3282,6 +3167,27 @@ function AppShellContent({
               }
             />
             {/* Content: SessionList, SourcesListPanel, or SettingsNavigator based on navigation state */}
+            {isAgentNavigation(navState) && (
+              <BenjiNavigatorPanel kind="agent" />
+            )}
+            {isProjectsNavigation(navState) && (
+              <BenjiProjectsNavigatorPanel
+                workspaceId={activeWorkspace?.id ?? null}
+                workspaceRootPath={activeWorkspace?.rootPath ?? null}
+                vaultRootPath={globalVaultRootPath}
+                selectedProjectId={navState.details?.projectId ?? null}
+                onSelectProject={(projectId) => navigate(routes.view.projects(projectId))}
+              />
+            )}
+            {isTasksNavigation(navState) && (
+              <VaultTasksListPanel
+                workspaceRootPath={activeWorkspace?.rootPath ?? null}
+                vaultRootPath={globalVaultRootPath}
+                section={navState.section}
+                onOpenNote={handleTaskNoteSelect}
+                refreshToken={taskIndexRefreshToken}
+              />
+            )}
             {isSourcesNavigation(navState) && (
               /* Sources List - filtered by type if sourceFilter is active */
               <SourcesListPanel
@@ -3320,23 +3226,52 @@ function AppShellContent({
               />
             )}
             {isNotesNavigation(navState) && (
-              activeKnowledgePanel === 'tasks' ? (
-                <VaultTasksListPanel
-                  workspaceRootPath={activeWorkspace?.rootPath ?? null}
-                  vaultRootPath={globalVaultRootPath}
-                  section={activeTasksSection}
-                  onOpenNote={handleNoteSelect}
-                  refreshToken={taskIndexRefreshToken}
-                />
-              ) : (
-                <VaultNotesListPanel
-                  workspaceId={activeWorkspace?.id ?? null}
-                  workspaceRootPath={activeWorkspace?.rootPath ?? null}
-                  vaultRootPath={globalVaultRootPath}
-                  selectedNotePath={isNotesNavigation(navState) && navState.details ? navState.details.notePath : null}
-                  onSelectNote={handleNoteSelect}
-                />
-              )
+              <VaultNotesListPanel
+                workspaceId={activeWorkspace?.id ?? null}
+                workspaceRootPath={activeWorkspace?.rootPath ?? null}
+                vaultRootPath={globalVaultRootPath}
+                selectedNotePath={isNotesNavigation(navState) && navState.details ? navState.details.notePath : null}
+                onSelectNote={handleNoteSelect}
+              />
+            )}
+            {isThreadsNavigation(navState) && (
+              <SessionList
+                key={`threads:${sessionFilter?.kind ?? 'allSessions'}`}
+                items={searchActive ? workspaceSessionMetas : filteredSessionMetas}
+                onDelete={handleDeleteSession}
+                onFlag={onFlagSession}
+                onUnflag={onUnflagSession}
+                onArchive={onArchiveSession}
+                onUnarchive={onUnarchiveSession}
+                onMarkUnread={onMarkSessionUnread}
+                onSessionStatusChange={onSessionStatusChange}
+                onRename={onRenameSession}
+                onFocusChatInput={focusChatInput}
+                onSessionSelect={(selectedMeta) => {
+                  if (selectedMeta.id) {
+                    navigateToSession(selectedMeta.id)
+                  }
+                }}
+                sessionOptions={sessionOptions}
+                searchActive={searchActive}
+                searchQuery={searchQuery}
+                onSearchChange={setSearchQuery}
+                onSearchClose={() => {
+                  setSearchActive(false)
+                  setSearchQuery('')
+                }}
+                labels={labelConfigs}
+                sessionStatuses={effectiveSessionStatuses}
+                evaluateViews={evaluateViews}
+                onLabelsChange={handleSessionLabelsChange}
+                workspaceId={activeWorkspaceId ?? undefined}
+                statusFilter={listFilter}
+                labelFilterMap={labelFilter}
+                focusedSessionId={navState.details?.sessionId ?? null}
+              />
+            )}
+            {isQueueNavigation(navState) && (
+              <BenjiNavigatorPanel kind="queue" />
             )}
             {isSettingsNavigation(navState) && (
               /* Settings Navigator */
@@ -3459,6 +3394,8 @@ function AppShellContent({
                       isAtLeftEdge={effectiveFocusMode && index === 0}
                       isAtRightEdge={index === panelStack.length - 1 && !isRightSidebarVisible}
                       proportion={entry.proportion}
+                      workspaceId={activeWorkspace?.id ?? null}
+                      workspaceRootPath={activeWorkspace?.rootPath ?? null}
                       vaultRootPath={globalVaultRootPath}
                       sash={index > 0 ? (
                         <PanelResizeSash
@@ -3474,6 +3411,8 @@ function AppShellContent({
               <MainContentPanel
                 isSidebarAndNavigatorHidden={effectiveFocusMode}
                 onNoteSaved={handleNoteSaved}
+                workspaceId={activeWorkspace?.id ?? null}
+                workspaceRootPath={activeWorkspace?.rootPath ?? null}
                 vaultRootPath={globalVaultRootPath}
               />
             )}
@@ -3529,6 +3468,7 @@ function AppShellContent({
                   <RightSidebar
                     panel={{ type: 'files' }}
                     sessionId={isSessionsNavigation(navState) && navState.details ? navState.details.sessionId : undefined}
+                    vaultRootPath={globalVaultRootPath}
                   />
                 </motion.div>
               </motion.div>
@@ -3561,6 +3501,7 @@ function AppShellContent({
                       <RightSidebar
                         panel={{ type: 'files' }}
                         sessionId={isSessionsNavigation(navState) && navState.details ? navState.details.sessionId : undefined}
+                        vaultRootPath={globalVaultRootPath}
                       />
                     </div>
                   </motion.div>

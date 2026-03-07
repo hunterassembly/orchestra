@@ -1588,15 +1588,90 @@ export interface NotesNavigationState {
 }
 
 /**
+ * Agent home navigation state
+ */
+export interface AgentNavigationState {
+  navigator: 'agent'
+  rightSidebar?: RightSidebarPanel
+}
+
+/**
+ * Projects navigation state
+ */
+export interface ProjectsNavigationState {
+  navigator: 'projects'
+  details: { type: 'project'; projectId: string } | null
+  rightSidebar?: RightSidebarPanel
+}
+
+/**
+ * Task sections for the Benji task index
+ */
+export type TaskSection = 'today' | 'upcoming' | 'anytime'
+
+/**
+ * Tasks navigation state
+ */
+export interface TasksNavigationState {
+  navigator: 'tasks'
+  section: TaskSection
+  details: { type: 'note'; notePath: string } | null
+  rightSidebar?: RightSidebarPanel
+}
+
+/**
+ * Threads navigation state - Benji's thread view over session history
+ */
+export interface ThreadsNavigationState {
+  navigator: 'threads'
+  filter: SessionFilter
+  details: { type: 'thread'; sessionId: string } | null
+  rightSidebar?: RightSidebarPanel
+}
+
+/**
+ * Queue navigation state
+ */
+export interface QueueNavigationState {
+  navigator: 'queue'
+  rightSidebar?: RightSidebarPanel
+}
+
+/**
  * Unified navigation state - single source of truth for all panels.
  */
 export type NavigationState =
+  | AgentNavigationState
+  | ProjectsNavigationState
+  | TasksNavigationState
+  | ThreadsNavigationState
+  | QueueNavigationState
   | SessionsNavigationState
   | SourcesNavigationState
   | SettingsNavigationState
   | SkillsNavigationState
   | AutomationsNavigationState
   | NotesNavigationState
+
+export const isAgentNavigation = (
+  state: NavigationState
+): state is AgentNavigationState => state.navigator === 'agent'
+
+export const isProjectsNavigation = (
+  state: NavigationState
+): state is ProjectsNavigationState => state.navigator === 'projects'
+
+export const isTasksNavigation = (
+  state: NavigationState
+): state is TasksNavigationState => state.navigator === 'tasks'
+
+export const isThreadsNavigation = (
+  state: NavigationState
+): state is ThreadsNavigationState => state.navigator === 'threads'
+
+export const isQueueNavigation = (
+  state: NavigationState
+): state is QueueNavigationState => state.navigator === 'queue'
 
 export const isSessionsNavigation = (
   state: NavigationState
@@ -1623,12 +1698,35 @@ export const isNotesNavigation = (
 ): state is NotesNavigationState => state.navigator === 'notes'
 
 export const DEFAULT_NAVIGATION_STATE: NavigationState = {
-  navigator: 'sessions',
-  filter: { kind: 'allSessions' },
-  details: null,
+  navigator: 'agent',
 }
 
 export const getNavigationStateKey = (state: NavigationState): string => {
+  if (state.navigator === 'agent') {
+    return 'agent'
+  }
+  if (state.navigator === 'projects') {
+    if (state.details?.type === 'project') {
+      return `projects/project/${encodeURIComponent(state.details.projectId)}`
+    }
+    return 'projects'
+  }
+  if (state.navigator === 'tasks') {
+    const base = `tasks:${state.section}`
+    if (state.details?.type === 'note') {
+      return `${base}/note/${encodeURIComponent(state.details.notePath)}`
+    }
+    return base
+  }
+  if (state.navigator === 'threads') {
+    if (state.details?.type === 'thread') {
+      return `threads/thread/${state.details.sessionId}`
+    }
+    return 'threads'
+  }
+  if (state.navigator === 'queue') {
+    return 'queue'
+  }
   if (state.navigator === 'sources') {
     if (state.details) {
       return `sources/source/${state.details.sourceSlug}`
@@ -1670,6 +1768,51 @@ export const getNavigationStateKey = (state: NavigationState): string => {
 }
 
 export const parseNavigationStateKey = (key: string): NavigationState | null => {
+  if (key === 'agent') return { navigator: 'agent' }
+
+  if (key === 'projects') return { navigator: 'projects', details: null }
+  if (key.startsWith('projects/project/')) {
+    const projectId = decodeURIComponent(key.slice(17))
+    if (projectId) {
+      return { navigator: 'projects', details: { type: 'project', projectId } }
+    }
+    return { navigator: 'projects', details: null }
+  }
+
+  if (key === 'queue') return { navigator: 'queue' }
+
+  if (key === 'threads') {
+    return { navigator: 'threads', filter: { kind: 'allSessions' }, details: null }
+  }
+  if (key.startsWith('threads/thread/')) {
+    const sessionId = key.slice(15)
+    if (sessionId) {
+      return {
+        navigator: 'threads',
+        filter: { kind: 'allSessions' },
+        details: { type: 'thread', sessionId },
+      }
+    }
+    return { navigator: 'threads', filter: { kind: 'allSessions' }, details: null }
+  }
+
+  if (key === 'tasks') return { navigator: 'tasks', section: 'today', details: null }
+  if (key.startsWith('tasks:')) {
+    const [sectionPart, detailType, ...detailRest] = key.split('/')
+    const section = sectionPart.slice(6)
+    if (section !== 'today' && section !== 'upcoming' && section !== 'anytime') {
+      return null
+    }
+    if (detailType === 'note' && detailRest.length > 0) {
+      return {
+        navigator: 'tasks',
+        section,
+        details: { type: 'note', notePath: decodeURIComponent(detailRest.join('/')) },
+      }
+    }
+    return { navigator: 'tasks', section, details: null }
+  }
+
   // Handle sources
   if (key === 'sources') return { navigator: 'sources', details: null }
   if (key.startsWith('sources/source/')) {

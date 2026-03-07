@@ -24,7 +24,14 @@ import { useAppShellContext } from '@/context/AppShellContext'
 import { sessionMetaMapAtom, type SessionMeta } from '@/atoms/sessions'
 import { StoplightProvider } from '@/context/StoplightContext'
 import {
+  useNavigation,
+  routes,
   useNavigationState,
+  isAgentNavigation,
+  isProjectsNavigation,
+  isTasksNavigation,
+  isThreadsNavigation,
+  isQueueNavigation,
   isSessionsNavigation,
   isSourcesNavigation,
   isSettingsNavigation,
@@ -43,6 +50,7 @@ import { AutomationInfoPage } from '../automations/AutomationInfoPage'
 import type { ExecutionEntry } from '../automations/types'
 import { automationsAtom } from '@/atoms/automations'
 import { VaultNoteEditorPanel } from './VaultNoteEditorPanel'
+import { BenjiAgentSurface, BenjiMainSurface, BenjiProjectCanvas, BenjiQueueSurface, BenjiTasksSurface } from './BenjiWaveOnePanels'
 
 export interface MainContentPanelProps {
   /** Whether both sidebar and navigator are hidden (focus mode / CMD+.) */
@@ -51,6 +59,10 @@ export interface MainContentPanelProps {
   onNoteSaved?: () => void
   /** Optional global vault root path for notes/tasks storage (from preferences). */
   vaultRootPath?: string | null
+  /** Optional active workspace id for workspace-scoped project registry. */
+  workspaceId?: string | null
+  /** Optional workspace root path for project/note-derived surfaces. */
+  workspaceRootPath?: string | null
   /** Optional className for the container */
   className?: string
   /**
@@ -65,11 +77,14 @@ export function MainContentPanel({
   isSidebarAndNavigatorHidden = false,
   onNoteSaved,
   vaultRootPath = null,
+  workspaceId = null,
+  workspaceRootPath = null,
   className,
   navStateOverride,
 }: MainContentPanelProps) {
   const globalNavState = useNavigationState()
   const navState = navStateOverride ?? globalNavState
+  const { navigate } = useNavigation()
   const {
     activeWorkspaceId,
     onSessionStatusChange,
@@ -92,7 +107,10 @@ export function MainContentPanel({
   const { clearMultiSelect } = useSessionSelection()
   const sessionMetaMap = useAtomValue(sessionMetaMapAtom)
   const automations = useAtomValue(automationsAtom)
-
+  const workspaceSessionMetas = useMemo(
+    () => Array.from(sessionMetaMap.values()).filter(meta => !meta.hidden && (!activeWorkspaceId || meta.workspaceId === activeWorkspaceId)),
+    [sessionMetaMap, activeWorkspaceId],
+  )
   // Execution history for the selected automation
   const selectedAutomationId = isAutomationsNavigation(navState) ? navState.details?.automationId : undefined
   const [executions, setExecutions] = useState<ExecutionEntry[]>([])
@@ -209,6 +227,43 @@ export function MainContentPanel({
     )
   }
 
+  if (isAgentNavigation(navState)) {
+    return wrapWithStoplight(
+      <Panel variant="grow" className={className}>
+        <BenjiAgentSurface
+          workspaceId={workspaceId}
+          workspaceRootPath={workspaceRootPath}
+          vaultRootPath={vaultRootPath}
+          sessions={workspaceSessionMetas}
+          automationCount={automations.length}
+          onOpenQueue={() => navigate(routes.view.queue())}
+          onOpenTasks={() => navigate(routes.view.tasksToday())}
+          onOpenThread={(sessionId) => navigate(routes.view.threads(sessionId))}
+          onOpenTask={(task) => navigate(routes.view.tasks({ section: task.status, notePath: task.notePath }))}
+          onOpenProject={(projectId) => navigate(routes.view.projects(projectId))}
+        />
+      </Panel>
+    )
+  }
+
+  if (isProjectsNavigation(navState)) {
+    return wrapWithStoplight(
+      <Panel variant="grow" className={className}>
+        <BenjiProjectCanvas
+          workspaceId={workspaceId}
+          workspaceRootPath={workspaceRootPath}
+          vaultRootPath={vaultRootPath}
+          selectedProjectId={navState.details?.projectId ?? null}
+          sessions={workspaceSessionMetas}
+          onOpenThread={(sessionId) => navigate(routes.view.threads(sessionId))}
+          onOpenTask={(task) => navigate(routes.view.tasks({ section: task.status, notePath: task.notePath }))}
+          onOpenTasks={() => navigate(routes.view.tasksToday())}
+          onOpenQueue={() => navigate(routes.view.queue())}
+        />
+      </Panel>
+    )
+  }
+
   // Sources navigator - show source info, multi-select panel, or empty state
   if (isSourcesNavigation(navState)) {
     if (isSourceMultiSelectActive) {
@@ -304,11 +359,86 @@ export function MainContentPanel({
     )
   }
 
+  if (isQueueNavigation(navState)) {
+    return wrapWithStoplight(
+      <Panel variant="grow" className={className}>
+        <BenjiQueueSurface
+          workspaceRootPath={workspaceRootPath}
+          vaultRootPath={vaultRootPath}
+          sessions={workspaceSessionMetas}
+          onOpenThread={(sessionId) => navigate(routes.view.threads(sessionId))}
+          onOpenTask={(task) => navigate(routes.view.tasks({ section: task.status, notePath: task.notePath }))}
+          onOpenTasks={() => navigate(routes.view.tasksToday())}
+        />
+      </Panel>
+    )
+  }
+
   // Notes navigator - show local markdown vault editor
   if (isNotesNavigation(navState)) {
     return wrapWithStoplight(
       <Panel variant="grow" className={className}>
         <VaultNoteEditorPanel notePath={navState.details?.notePath ?? null} onNoteSaved={onNoteSaved} vaultRootPath={vaultRootPath} />
+      </Panel>
+    )
+  }
+
+  if (isTasksNavigation(navState)) {
+    if (navState.details?.type === 'note') {
+      return wrapWithStoplight(
+        <Panel variant="grow" className={className}>
+          <VaultNoteEditorPanel
+            notePath={navState.details.notePath}
+            onNoteSaved={onNoteSaved}
+            vaultRootPath={vaultRootPath}
+          />
+        </Panel>
+      )
+    }
+
+    return wrapWithStoplight(
+      <Panel variant="grow" className={className}>
+        <BenjiTasksSurface
+          workspaceRootPath={workspaceRootPath}
+          vaultRootPath={vaultRootPath}
+          section={navState.section}
+          onOpenTask={(task) => navigate(routes.view.tasks({ section: task.status, notePath: task.notePath }))}
+          onOpenQueue={() => navigate(routes.view.queue())}
+        />
+      </Panel>
+    )
+  }
+
+  if (isThreadsNavigation(navState)) {
+    if (isMultiSelectActive) {
+      return wrapWithStoplight(
+        <Panel variant="grow" className={className}>
+          <MultiSelectPanel
+            count={selectionCount}
+            sessionStatuses={sessionStatuses}
+            activeStatusId={activeStatusId}
+            onSetStatus={handleBatchSetStatus}
+            labels={labels}
+            appliedLabelIds={appliedLabelIds}
+            onToggleLabel={handleBatchToggleLabel}
+            onArchive={handleBatchArchive}
+            onClearSelection={clearMultiSelect}
+          />
+        </Panel>
+      )
+    }
+
+    if (navState.details) {
+      return wrapWithStoplight(
+        <Panel variant="grow" className={className}>
+          <ChatPage sessionId={navState.details.sessionId} />
+        </Panel>
+      )
+    }
+
+    return wrapWithStoplight(
+      <Panel variant="grow" className={className}>
+        <BenjiMainSurface kind="threads" />
       </Panel>
     )
   }

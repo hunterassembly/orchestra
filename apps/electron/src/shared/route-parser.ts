@@ -35,11 +35,24 @@ export interface ParsedRoute {
 // Compound Route Types (new format)
 // =============================================================================
 
-export type NavigatorType = 'sessions' | 'sources' | 'skills' | 'automations' | 'notes' | 'settings'
+export type NavigatorType =
+  | 'agent'
+  | 'projects'
+  | 'tasks'
+  | 'threads'
+  | 'queue'
+  | 'sessions'
+  | 'sources'
+  | 'skills'
+  | 'automations'
+  | 'notes'
+  | 'settings'
 
 export interface ParsedCompoundRoute {
   /** The navigator type */
   navigator: NavigatorType
+  /** Task section (only for tasks navigator) */
+  taskSection?: 'today' | 'upcoming' | 'anytime'
   /** Session filter (only for sessions navigator) */
   sessionFilter?: SessionFilter
   /** Source filter (only for sources navigator) */
@@ -61,7 +74,7 @@ export interface ParsedCompoundRoute {
  * Known prefixes that indicate a compound route
  */
 const COMPOUND_ROUTE_PREFIXES = [
-  'allSessions', 'flagged', 'archived', 'state', 'label', 'view', 'sources', 'skills', 'automations', 'notes', 'settings'
+  'agent', 'projects', 'tasks', 'threads', 'queue', 'allSessions', 'flagged', 'archived', 'state', 'label', 'view', 'sources', 'skills', 'automations', 'notes', 'settings'
 ]
 
 /**
@@ -93,6 +106,84 @@ export function parseCompoundRoute(route: string): ParsedCompoundRoute | null {
   if (segments.length === 0) return null
 
   const first = segments[0]
+
+  if (first === 'agent') {
+    return {
+      navigator: 'agent',
+      details: null,
+    }
+  }
+
+  if (first === 'projects') {
+    if (segments.length === 1) {
+      return { navigator: 'projects', details: null }
+    }
+    if (segments[1] === 'project' && segments[2]) {
+      return {
+        navigator: 'projects',
+        details: { type: 'project', id: decodeURIComponent(segments[2]) },
+      }
+    }
+    return null
+  }
+
+  if (first === 'tasks') {
+    const validSections = ['today', 'upcoming', 'anytime'] as const
+    const taskSection = validSections.includes((segments[1] ?? '') as typeof validSections[number])
+      ? segments[1] as typeof validSections[number]
+      : 'today'
+
+    if (segments.length === 1) {
+      return {
+        navigator: 'tasks',
+        taskSection,
+        details: null,
+      }
+    }
+
+    if (segments[1] && !validSections.includes(segments[1] as typeof validSections[number])) {
+      return null
+    }
+
+    if (segments[2] === 'note' && segments[3]) {
+      return {
+        navigator: 'tasks',
+        taskSection,
+        details: { type: 'note', id: decodeURIComponent(segments[3]) },
+      }
+    }
+
+    return {
+      navigator: 'tasks',
+      taskSection,
+      details: null,
+    }
+  }
+
+  if (first === 'threads') {
+    if (segments.length === 1) {
+      return {
+        navigator: 'threads',
+        sessionFilter: { kind: 'allSessions' },
+        details: null,
+      }
+    }
+    if (segments[1] === 'thread' && segments[2]) {
+      return {
+        navigator: 'threads',
+        sessionFilter: { kind: 'allSessions' },
+        details: { type: 'thread', id: segments[2] },
+      }
+    }
+    return null
+  }
+
+  if (first === 'queue') {
+    return {
+      navigator: 'queue',
+      details: null,
+    }
+  }
 
   // Settings navigator
   if (first === 'settings') {
@@ -270,6 +361,30 @@ export function parseCompoundRoute(route: string): ParsedCompoundRoute | null {
  * Build a compound route string from parsed state
  */
 export function buildCompoundRoute(parsed: ParsedCompoundRoute): string {
+  if (parsed.navigator === 'agent') {
+    return 'agent'
+  }
+
+  if (parsed.navigator === 'projects') {
+    if (!parsed.details) return 'projects'
+    return `projects/project/${encodeURIComponent(parsed.details.id)}`
+  }
+
+  if (parsed.navigator === 'tasks') {
+    const base = parsed.taskSection ? `tasks/${parsed.taskSection}` : 'tasks'
+    if (!parsed.details) return base
+    return `${base}/note/${encodeURIComponent(parsed.details.id)}`
+  }
+
+  if (parsed.navigator === 'threads') {
+    if (!parsed.details) return 'threads'
+    return `threads/thread/${parsed.details.id}`
+  }
+
+  if (parsed.navigator === 'queue') {
+    return 'queue'
+  }
+
   if (parsed.navigator === 'settings') {
     const detailsType = parsed.details?.type || 'app'
     return `settings/${detailsType}`
@@ -395,6 +510,44 @@ export function parseRoute(route: string): ParsedRoute | null {
  * Convert a parsed compound route to ParsedRoute format (type: 'view')
  */
 function convertCompoundToViewRoute(compound: ParsedCompoundRoute): ParsedRoute {
+  if (compound.navigator === 'agent') {
+    return { type: 'view', name: 'agent', params: {} }
+  }
+
+  if (compound.navigator === 'projects') {
+    if (!compound.details) {
+      return { type: 'view', name: 'projects', params: {} }
+    }
+    return { type: 'view', name: 'project-canvas', id: compound.details.id, params: {} }
+  }
+
+  if (compound.navigator === 'tasks') {
+    if (!compound.details) {
+      return {
+        type: 'view',
+        name: 'tasks',
+        params: { section: compound.taskSection || 'today' },
+      }
+    }
+    return {
+      type: 'view',
+      name: 'tasks-note',
+      id: compound.details.id,
+      params: { section: compound.taskSection || 'today' },
+    }
+  }
+
+  if (compound.navigator === 'threads') {
+    if (!compound.details) {
+      return { type: 'view', name: 'threads', params: {} }
+    }
+    return { type: 'view', name: 'thread', id: compound.details.id, params: {} }
+  }
+
+  if (compound.navigator === 'queue') {
+    return { type: 'view', name: 'queue', params: {} }
+  }
+
   // Settings
   if (compound.navigator === 'settings') {
     const subpage = compound.details?.type || 'app'
@@ -520,6 +673,48 @@ export function parseRouteToNavigationState(
  * Convert a ParsedCompoundRoute to NavigationState
  */
 function convertCompoundToNavigationState(compound: ParsedCompoundRoute): NavigationState {
+  if (compound.navigator === 'agent') {
+    return { navigator: 'agent' }
+  }
+
+  if (compound.navigator === 'projects') {
+    if (!compound.details) {
+      return { navigator: 'projects', details: null }
+    }
+    return {
+      navigator: 'projects',
+      details: { type: 'project', projectId: compound.details.id },
+    }
+  }
+
+  if (compound.navigator === 'tasks') {
+    const section = compound.taskSection || 'today'
+    if (!compound.details) {
+      return { navigator: 'tasks', section, details: null }
+    }
+    return {
+      navigator: 'tasks',
+      section,
+      details: { type: 'note', notePath: compound.details.id },
+    }
+  }
+
+  if (compound.navigator === 'threads') {
+    const filter = compound.sessionFilter || { kind: 'allSessions' as const }
+    if (!compound.details) {
+      return { navigator: 'threads', filter, details: null }
+    }
+    return {
+      navigator: 'threads',
+      filter,
+      details: { type: 'thread', sessionId: compound.details.id },
+    }
+  }
+
+  if (compound.navigator === 'queue') {
+    return { navigator: 'queue' }
+  }
+
   // Settings
   if (compound.navigator === 'settings') {
     const subpage = (compound.details?.type || 'app') as SettingsSubpage
@@ -606,6 +801,58 @@ function convertParsedRouteToNavigationState(parsed: ParsedRoute): NavigationSta
   }
 
   switch (parsed.name) {
+    case 'agent':
+      return { navigator: 'agent' }
+    case 'projects':
+      return { navigator: 'projects', details: null }
+    case 'project-canvas':
+      if (parsed.id) {
+        return {
+          navigator: 'projects',
+          details: { type: 'project', projectId: parsed.id },
+        }
+      }
+      return { navigator: 'projects', details: null }
+    case 'tasks': {
+      const section = parsed.params.section
+      const taskSection =
+        section === 'upcoming' || section === 'anytime' || section === 'today'
+          ? section
+          : 'today'
+      return { navigator: 'tasks', section: taskSection, details: null }
+    }
+    case 'tasks-note': {
+      const section = parsed.params.section
+      const taskSection =
+        section === 'upcoming' || section === 'anytime' || section === 'today'
+          ? section
+          : 'today'
+      if (parsed.id) {
+        return {
+          navigator: 'tasks',
+          section: taskSection,
+          details: { type: 'note', notePath: parsed.id },
+        }
+      }
+      return { navigator: 'tasks', section: taskSection, details: null }
+    }
+    case 'threads':
+      return {
+        navigator: 'threads',
+        filter: { kind: 'allSessions' },
+        details: null,
+      }
+    case 'thread':
+      if (parsed.id) {
+        return {
+          navigator: 'threads',
+          filter: { kind: 'allSessions' },
+          details: { type: 'thread', sessionId: parsed.id },
+        }
+      }
+      return { navigator: 'threads', filter: { kind: 'allSessions' }, details: null }
+    case 'queue':
+      return { navigator: 'queue' }
     case 'settings':
       return { navigator: 'settings', subpage: 'app' }
     case 'workspace':
@@ -745,6 +992,49 @@ function convertParsedRouteToNavigationState(parsed: ParsedRoute): NavigationSta
  * Convert NavigationState to ParsedCompoundRoute
  */
 function navigationStateToCompoundRoute(state: NavigationState): ParsedCompoundRoute {
+  if (state.navigator === 'agent') {
+    return {
+      navigator: 'agent',
+      details: null,
+    }
+  }
+
+  if (state.navigator === 'projects') {
+    return {
+      navigator: 'projects',
+      details: state.details?.type === 'project'
+        ? { type: 'project', id: state.details.projectId }
+        : null,
+    }
+  }
+
+  if (state.navigator === 'tasks') {
+    return {
+      navigator: 'tasks',
+      taskSection: state.section,
+      details: state.details?.type === 'note'
+        ? { type: 'note', id: state.details.notePath }
+        : null,
+    }
+  }
+
+  if (state.navigator === 'threads') {
+    return {
+      navigator: 'threads',
+      sessionFilter: state.filter,
+      details: state.details?.type === 'thread'
+        ? { type: 'thread', id: state.details.sessionId }
+        : null,
+    }
+  }
+
+  if (state.navigator === 'queue') {
+    return {
+      navigator: 'queue',
+      details: null,
+    }
+  }
+
   if (state.navigator === 'settings') {
     return {
       navigator: 'settings',

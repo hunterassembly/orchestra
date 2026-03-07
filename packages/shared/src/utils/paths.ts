@@ -212,6 +212,10 @@ export function getBundledAssetsDir(subfolder: string): string | undefined {
     join(process.cwd(), 'resources', subfolder),
     // Dev: dist output (after build:copy)
     join(process.cwd(), 'dist', 'resources', subfolder),
+    // Dev: workspace root running electron against apps/electron
+    join(process.cwd(), 'apps', 'electron', 'resources', subfolder),
+    // Dev: workspace root after electron build copied assets into dist/resources
+    join(process.cwd(), 'apps', 'electron', 'dist', 'resources', subfolder),
   ];
   return candidates.find(p => existsSync(p));
 }

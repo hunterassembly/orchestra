@@ -1,74 +1,27 @@
 import * as React from 'react'
 import { CalendarClock, CheckSquare2, User } from 'lucide-react'
-
-type TaskSectionId = 'today' | 'upcoming' | 'anytime'
-
-interface VaultTaskItem {
-  id: string
-  title: string
-  status: TaskSectionId
-  dueDate?: string
-  assignee?: string
-  description?: string
-  notePath: string
-  noteTitle: string
-}
+import {
+  getNotesBasePath,
+  loadWaveOneTasks,
+  type WaveOneTaskItem,
+  type WaveOneTaskSection,
+} from './wave-one-indexing'
 
 interface VaultTasksListPanelProps {
   workspaceRootPath: string | null
   vaultRootPath?: string | null
-  section: TaskSectionId
+  section: WaveOneTaskSection
   onOpenNote: (notePath: string) => void
   refreshToken?: number
 }
 
-function getAttr(attrs: string, key: string): string {
-  const match = attrs.match(new RegExp(`${key}="([^"]*)"`, 'i'))
-  return match?.[1] ?? ''
-}
-
-function stripHtml(html: string): string {
-  return html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim()
-}
-
 export function VaultTasksListPanel({ workspaceRootPath, vaultRootPath = null, section, onOpenNote, refreshToken = 0 }: VaultTasksListPanelProps) {
-  const [tasks, setTasks] = React.useState<VaultTaskItem[]>([])
+  const [tasks, setTasks] = React.useState<WaveOneTaskItem[]>([])
   const effectiveRootPath = React.useMemo(() => vaultRootPath || workspaceRootPath, [vaultRootPath, workspaceRootPath])
-  const notesBasePath = React.useMemo(() => {
-    if (!effectiveRootPath) return null
-    return vaultRootPath
-      ? effectiveRootPath.replace(/\/$/, '')
-      : `${effectiveRootPath.replace(/\/$/, '')}/notes`
-  }, [effectiveRootPath, vaultRootPath])
-  const toRelativePath = React.useCallback((absolutePath: string): string => {
-    if (!effectiveRootPath) return absolutePath
-    const normalizedRoot = effectiveRootPath.replace(/\/+$/, '')
-    const normalizedPath = absolutePath.replace(/\\/g, '/')
-    const rootWithSlash = `${normalizedRoot}/`
-    if (normalizedPath.startsWith(rootWithSlash)) {
-      return normalizedPath.slice(rootWithSlash.length)
-    }
-    if (normalizedPath.startsWith(normalizedRoot)) {
-      return normalizedPath.slice(normalizedRoot.length).replace(/^\/+/, '')
-    }
-    return absolutePath
-  }, [effectiveRootPath])
-
-  const listMarkdownNotes = React.useCallback(async (dirPath: string): Promise<Array<{ path: string; relativePath: string; title: string }>> => {
-    const entries = await window.electronAPI.getWorkspaceFiles(dirPath)
-    const nested = await Promise.all(entries.map(async (entry) => {
-      if (entry.type === 'directory') return listMarkdownNotes(entry.path)
-      const lower = entry.name.toLowerCase()
-      if (!lower.endsWith('.md') && !lower.endsWith('.markdown')) return []
-      const relativePath = toRelativePath(entry.path)
-      return [{
-        path: entry.path,
-        relativePath,
-        title: entry.name.replace(/\.(md|markdown)$/i, ''),
-      }]
-    }))
-    return nested.flat()
-  }, [toRelativePath])
+  const notesBasePath = React.useMemo(
+    () => getNotesBasePath(workspaceRootPath, vaultRootPath),
+    [workspaceRootPath, vaultRootPath],
+  )
 
   const loadTasks = React.useCallback(async () => {
     if (!notesBasePath) {
@@ -77,47 +30,14 @@ export function VaultTasksListPanel({ workspaceRootPath, vaultRootPath = null, s
     }
 
     try {
-      const notes = await listMarkdownNotes(notesBasePath)
-      const parsed: VaultTaskItem[] = []
-
-      await Promise.all(notes.map(async (note) => {
-        const markdown = vaultRootPath
-          ? await window.electronAPI.readVaultText(vaultRootPath, note.relativePath)
-          : await window.electronAPI.readFile(note.path)
-        const matches = markdown.matchAll(/<task-card([^>]*)>([\s\S]*?)<\/task-card>/gi)
-        for (const match of matches) {
-          const attrs = match[1] ?? ''
-          const inner = match[2] ?? ''
-          const statusRaw = (getAttr(attrs, 'status') || 'anytime').toLowerCase()
-          const status: TaskSectionId = statusRaw === 'today' || statusRaw === 'upcoming' || statusRaw === 'anytime'
-            ? statusRaw
-            : 'anytime'
-          parsed.push({
-            id: `${note.relativePath}:${match.index ?? parsed.length}`,
-            title: getAttr(attrs, 'title') || 'Untitled task',
-            status,
-            dueDate: getAttr(attrs, 'dueDate') || undefined,
-            assignee: getAttr(attrs, 'assignee') || undefined,
-            description: stripHtml(inner) || undefined,
-            notePath: note.relativePath,
-            noteTitle: note.title,
-          })
-        }
-      }))
-
-      const filtered = parsed
+      const filtered = (await loadWaveOneTasks(workspaceRootPath, vaultRootPath))
         .filter(task => task.status === section)
-        .sort((a, b) => {
-          if (!!a.dueDate !== !!b.dueDate) return a.dueDate ? -1 : 1
-          if (a.dueDate && b.dueDate) return a.dueDate.localeCompare(b.dueDate)
-          return a.title.localeCompare(b.title)
-        })
 
       setTasks(filtered)
     } catch {
       setTasks([])
     }
-  }, [notesBasePath, section, listMarkdownNotes, vaultRootPath])
+  }, [notesBasePath, section, workspaceRootPath, vaultRootPath])
 
   React.useEffect(() => {
     const run = async () => {

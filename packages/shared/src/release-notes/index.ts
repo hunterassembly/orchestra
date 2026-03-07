@@ -13,14 +13,46 @@ import { existsSync, mkdirSync, writeFileSync, readdirSync, readFileSync } from 
 import { getBundledAssetsDir } from '../utils/paths.ts';
 import { debug } from '../utils/debug.ts';
 
-const CONFIG_DIR = join(homedir(), '.craft-agent');
-const RELEASE_NOTES_DIR = join(CONFIG_DIR, 'release-notes');
-
 let releaseNotesInitialized = false;
+
+function getConfigDir(): string {
+  return process.env.CRAFT_CONFIG_DIR || join(homedir(), '.craft-agent');
+}
+
+function getReleaseNotesDir(): string {
+  return join(getConfigDir(), 'release-notes');
+}
 
 function getAssetsDir(): string {
   return getBundledAssetsDir('release-notes')
-    ?? join(process.cwd(), 'resources', 'release-notes');
+    ?? join(process.cwd(), 'apps', 'electron', 'resources', 'release-notes');
+}
+
+/**
+ * Load release notes from a directory.
+ * Returns { filename → content } map.
+ */
+function loadReleaseNotesFromDir(dir: string, label: string): Record<string, string> {
+  const notes: Record<string, string> = {};
+
+  let files: string[];
+  try {
+    files = existsSync(dir) ? readdirSync(dir).filter(f => f.endsWith('.md')) : [];
+  } catch {
+    console.warn(`[release-notes] Could not read ${label} dir: ${dir}`);
+    return notes;
+  }
+
+  for (const filename of files) {
+    const filePath = join(dir, filename);
+    try {
+      notes[filename] = readFileSync(filePath, 'utf-8');
+    } catch (error) {
+      console.error(`[release-notes] Failed to load ${label} note ${filename}:`, error);
+    }
+  }
+
+  return notes;
 }
 
 /**
@@ -28,27 +60,11 @@ function getAssetsDir(): string {
  * Returns { filename → content } map.
  */
 function loadBundledReleaseNotes(): Record<string, string> {
-  const assetsDir = getAssetsDir();
-  const notes: Record<string, string> = {};
+  return loadReleaseNotesFromDir(getAssetsDir(), 'bundled');
+}
 
-  let files: string[];
-  try {
-    files = existsSync(assetsDir) ? readdirSync(assetsDir).filter(f => f.endsWith('.md')) : [];
-  } catch {
-    console.warn(`[release-notes] Could not read assets dir: ${assetsDir}`);
-    return notes;
-  }
-
-  for (const filename of files) {
-    const filePath = join(assetsDir, filename);
-    try {
-      notes[filename] = readFileSync(filePath, 'utf-8');
-    } catch (error) {
-      console.error(`[release-notes] Failed to load ${filename}:`, error);
-    }
-  }
-
-  return notes;
+function loadSyncedReleaseNotes(): Record<string, string> {
+  return loadReleaseNotesFromDir(getReleaseNotesDir(), 'synced');
 }
 
 let _bundledNotes: Record<string, string> | null = null;
@@ -68,17 +84,19 @@ export function initializeReleaseNotes(): void {
   if (releaseNotesInitialized) return;
   releaseNotesInitialized = true;
 
-  if (!existsSync(RELEASE_NOTES_DIR)) {
-    mkdirSync(RELEASE_NOTES_DIR, { recursive: true });
+  const releaseNotesDir = getReleaseNotesDir();
+
+  if (!existsSync(releaseNotesDir)) {
+    mkdirSync(releaseNotesDir, { recursive: true });
   }
 
   const bundledNotes = getBundledReleaseNotes();
   for (const [filename, content] of Object.entries(bundledNotes)) {
-    const notePath = join(RELEASE_NOTES_DIR, filename);
+    const notePath = join(releaseNotesDir, filename);
     writeFileSync(notePath, content, 'utf-8');
   }
 
-  debug(`[release-notes] Synced ${Object.keys(bundledNotes).length} release notes`);
+  debug(`[release-notes] Synced ${Object.keys(bundledNotes).length} release notes to ${releaseNotesDir}`);
 }
 
 /**
@@ -112,7 +130,10 @@ export interface ReleaseNote {
  * Get release notes sorted newest-first, limited to the most recent 10.
  */
 export function getReleaseNotesList(): ReleaseNote[] {
-  const notes = getBundledReleaseNotes();
+  const notes = {
+    ...loadSyncedReleaseNotes(),
+    ...getBundledReleaseNotes(),
+  };
   return Object.entries(notes)
     .map(([filename, content]) => ({
       version: parseVersion(filename),
